@@ -53,6 +53,7 @@ All commands run via Docker Compose from the project root:
 | **`inspect`** | Displays recent session OHLCV, multi-window broker flows, and signal logs for a symbol. | `docker compose run --rm app python -m src.cli inspect <SYMBOL> --sessions 22` |
 | **`broker`** | Deep-dive one broker's holdings across all stocks and windows (T1/T5/T22/T66). | `docker compose run --rm app python -m src.cli broker <ID> --top 5` |
 | **`signals`** | Audits historical persisted signals and multi-session accumulation streaks. | `docker compose run --rm app python -m src.cli signals` |
+| **`watch`** | Maintains your personal research watchlist and dated notes, with latest market context. | `docker compose run --rm app python -m src.cli watch list` |
 
 *   `--sessions N`: Number of historical sessions to display in the OHLCV table (default: 22).
 
@@ -71,6 +72,11 @@ All commands run via Docker Compose from the project root:
 *   `signals --signal ACTIVE_MARKUP --broker 38` — combine signal-type and broker filters.
 *   `broker 58` — deep dive on broker 58's top 5 holdings (last 66 sessions).
 *   `broker 58 --top 10 --sessions 22` — top 10 holdings over the last 22 sessions.
+*   `watch add LEC --thesis "Broker 58 accumulating" --tags "momentum,track-a"` — start researching a ticker.
+*   `watch note LEC "T22 remains positive; recheck next session"` — append a dated observation after `inspect`.
+*   `watch list` — show active research names with their latest close, daily change, turnover rank, and latest note.
+*   `watch history LEC` — review the full thesis and journal for one ticker.
+*   `watch archive LEC` — hide a completed/invalidated idea without deleting its history.
 
 ---
 
@@ -120,6 +126,10 @@ Run in sequence after market close:
 
 6. **Inspect High-Conviction Tickers:**
    `docker compose run --rm app python -m src.cli inspect <SYMBOL>`
+
+7. **Journal the decision:**
+   `docker compose run --rm app python -m src.cli watch add <SYMBOL> --thesis "why it is on watch"`
+   then append observations with `watch note <SYMBOL> "what changed today"`.
 
 ---
 

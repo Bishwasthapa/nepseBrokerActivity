@@ -202,6 +202,14 @@ for the same session twice **upserts** rather than duplicates (`ON CONFLICT
 Indexes: `(symbol, trade_date)`, `(broker_id, trade_date)`,
 `(signal, trade_date)`.
 
+### 4.5 `watchlist` and `watchlist_notes` — personal research journal
+
+`watchlist` stores one research thesis per ticker (with tags and active/archive
+status). `watchlist_notes` is an append-only, dated log of observations. The CLI
+joins the watchlist to the most recent `daily_market_summary` row so `watch list`
+shows current price, daily change, and turnover rank without requiring manual
+updates.
+
 > **Volume migrations for existing `pgdata`:** `schema.sql` only auto-runs on a
 > **fresh** `pgdata` volume. If you already have a running DB predating this
 > table, re-apply the schema to add the new table + indexes idempotently:
@@ -212,7 +220,7 @@ Indexes: `(symbol, trade_date)`, `(broker_id, trade_date)`,
 > ```
 >
 > For an existing DB that predates the `matched_qty` column (Wash/Cross-Trade
-> detection, §6.8), add the column and backfill it from the floorsheet:
+> detection, §6.9), add the column and backfill it from the floorsheet:
 >
 > ```bash
 > docker compose exec -T db psql -U quant -d nepse_analytics \
@@ -404,7 +412,32 @@ exactly as they would have been known *on* that date — no look-ahead. It then
 (re)persists that session's signals, which is how history is rebuilt
 retroactively.
 
-### 6.7 Multi-window turnover momentum (`momentum`)
+### 6.7 Personal research journal (`watch`)
+
+`watch` is the durable manual layer over the automated scanners. Use it to record
+why a candidate from `momentum`, Track A/B, or `wash` deserves attention, then
+append observations after each `inspect`. It stores a thesis, tags, dated notes,
+and active/archive status in PostgreSQL. `watch list` also enriches every active
+name with its latest close, daily change, and turnover rank.
+
+```bash
+# Create a research item from a scanner result.
+docker compose run --rm app python -m src.cli watch add LEC \
+  --thesis "T22 broker accumulation with rising turnover" \
+  --tags "momentum,track-a" \
+  --note "Inspect broker 58 after next close"
+
+# Record what changed after checking the next floorsheet.
+docker compose run --rm app python -m src.cli watch note LEC "Broker 58 stayed net positive; hold thesis."
+docker compose run --rm app python -m src.cli watch list
+docker compose run --rm app python -m src.cli watch history LEC
+docker compose run --rm app python -m src.cli watch archive LEC
+```
+
+The same project-wide exclusions apply: promoter symbols, debentures, and manual
+exclusions such as `RSY` cannot be added to the journal.
+
+### 6.8 Multi-window turnover momentum (`momentum`)
 A secondary scanner (`screen_turnover_momentum`) compares **short-window**
 liquidity (default **5 sessions**) against a **baseline** (default **22
 sessions**) to find structural turnover shifts, independent of price moves:
@@ -430,7 +463,7 @@ Each candidate is **enriched with broker footprint**: the dominant net buyer
 (`top_accumulator`) and net seller (`top_distributor`) broker over the short
 window, drawn from `daily_broker_rollup` net flows.
 
-### 6.8 Internal matching & cross/wash-trade detection (`wash`)
+### 6.9 Internal matching & cross/wash-trade detection (`wash`)
 Wash/cross-trade detection quantifies how much volume is booked by the **same
 broker on both sides** of a trade (`buyer_broker == seller_broker`). Two
 metrics derive directly from the rollup's `matched_qty` column.

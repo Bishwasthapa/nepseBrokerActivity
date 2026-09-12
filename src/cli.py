@@ -469,6 +469,109 @@ def render_streaks(rows: list[dict], min_streak: int) -> Table:
     return table
 
 
+def render_watchlist(rows: list[dict], include_archived: bool = False) -> Table:
+    title = "Research Watchlist"
+    if include_archived:
+        title += " (including archived)"
+    table = Table(title=title, title_style="bold white", header_style="bold yellow", expand=True)
+    for col, justify in [
+        ("Symbol", "left"),
+        ("Status", "left"),
+        ("Close", "right"),
+        ("1D Δ%", "right"),
+        ("Rank", "right"),
+        ("Tags", "left"),
+        ("Thesis", "left"),
+        ("Latest Note", "left"),
+        ("Updated", "left"),
+    ]:
+        table.add_column(col, justify=justify)
+    for r in rows:
+        note = r["note"] or "-"
+        if r["note_date"]:
+            note = f"{r['note_date']}: {note}"
+        table.add_row(
+            r["symbol"],
+            r["status"],
+            _fmt_num(r["close_price"], 2),
+            _fmt_pct(r["price_change_pct"]),
+            _fmt_num(r["turnover_rank"]),
+            r["tags"] or "-",
+            r["thesis"] or "-",
+            note,
+            str(r["updated_date"]),
+        )
+    return table
+
+
+def render_watch_history(metadata: dict, notes: list[dict]) -> None:
+    details = [
+        f"[bold]Status:[/bold] {metadata['status']}",
+        f"[bold]Added:[/bold] {metadata['added_date']}",
+        f"[bold]Updated:[/bold] {metadata['updated_date']}",
+    ]
+    if metadata["tags"]:
+        details.append(f"[bold]Tags:[/bold] {metadata['tags']}")
+    if metadata["thesis"]:
+        details.append(f"[bold]Thesis:[/bold] {metadata['thesis']}")
+    console.print(Panel("\n".join(details), title=f"Research Journal — {metadata['symbol']}", style="bold blue"))
+    if not notes:
+        console.print("[dim]No journal notes yet[/dim]")
+        return
+    table = Table(title="Journal Notes", title_style="bold white", header_style="bold yellow", expand=True)
+    table.add_column("Date", justify="left")
+    table.add_column("Note", justify="left")
+    for row in notes:
+        table.add_row(str(row["note_date"]), row["note"])
+    console.print(table)
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    from src.screener import _is_excluded
+    from src.watchlist import add_note, add_symbol, archive_symbol, history, list_symbols
+
+    symbol = getattr(args, "symbol", None)
+    if symbol:
+        symbol = symbol.upper()
+        if _is_excluded(symbol):
+            console.print(f"[yellow]{symbol} is excluded from this project and cannot be watched[/yellow]")
+            return 2
+
+    conn = get_conn()
+    try:
+        if args.watch_command == "add":
+            add_symbol(conn, symbol, thesis=args.thesis, tags=args.tags, note=args.note)
+            console.print(f"[green]Watching {symbol}[/green]")
+            return 0
+        if args.watch_command == "note":
+            if not add_note(conn, symbol, args.note):
+                console.print(f"[yellow]{symbol} is not on the watchlist; add it first with `watch add {symbol}`[/yellow]")
+                return 2
+            console.print(f"[green]Journal note added for {symbol}[/green]")
+            return 0
+        if args.watch_command == "archive":
+            if not archive_symbol(conn, symbol):
+                console.print(f"[yellow]{symbol} is not an active watched symbol[/yellow]")
+                return 2
+            console.print(f"[green]Archived {symbol}; its journal history is retained[/green]")
+            return 0
+        if args.watch_command == "history":
+            metadata, notes = history(conn, symbol, limit=args.limit)
+            if metadata is None:
+                console.print(f"[yellow]{symbol} is not on the watchlist[/yellow]")
+                return 2
+            render_watch_history(metadata, notes)
+            return 0
+        rows = list_symbols(conn, include_archived=args.all)
+        if not rows:
+            console.print("[dim]No active watchlist symbols. Add one with `watch add LEC --thesis \"...\"`[/dim]")
+            return 0
+        console.print(render_watchlist(rows, include_archived=args.all))
+        return 0
+    finally:
+        conn.close()
+
+
 def cmd_signals(args: argparse.Namespace) -> int:
     from src.db import get_conn
     from src.signals import current_streaks, load_signal_history
@@ -923,6 +1026,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_signals.add_argument("--limit", type=int, default=100)
     p_signals.set_defaults(func=cmd_signals)
+
+    p_watch = sub.add_parser("watch", help="Manage personal research watchlist and journal")
+    p_watch_sub = p_watch.add_subparsers(dest="watch_command", required=True)
+    p_watch_add = p_watch_sub.add_parser("add", help="Add or reactivate a research ticker")
+    p_watch_add.add_argument("symbol", type=str, help="NEPSE ticker, e.g. LEC")
+    p_watch_add.add_argument("--thesis", type=str, default=None, help="Why the ticker is on watch")
+    p_watch_add.add_argument("--tags", type=str, default=None, help="Comma-separated research tags")
+    p_watch_add.add_argument("--note", type=str, default=None, help="Optional first dated journal note")
+    p_watch_add.set_defaults(func=cmd_watch)
+    p_watch_note = p_watch_sub.add_parser("note", help="Append a dated journal observation")
+    p_watch_note.add_argument("symbol", type=str, help="Watched NEPSE ticker")
+    p_watch_note.add_argument("note", type=str, help="Observation to record")
+    p_watch_note.set_defaults(func=cmd_watch)
+    p_watch_list = p_watch_sub.add_parser("list", help="List active research tickers")
+    p_watch_list.add_argument("--all", action="store_true", help="Include archived research tickers")
+    p_watch_list.set_defaults(func=cmd_watch)
+    p_watch_history = p_watch_sub.add_parser("history", help="Show full research journal for a ticker")
+    p_watch_history.add_argument("symbol", type=str, help="Watched NEPSE ticker")
+    p_watch_history.add_argument("--limit", type=int, default=100, help="Maximum notes to show (default: 100)")
+    p_watch_history.set_defaults(func=cmd_watch)
+    p_watch_archive = p_watch_sub.add_parser("archive", help="Archive a ticker but keep its journal")
+    p_watch_archive.add_argument("symbol", type=str, help="Watched NEPSE ticker")
+    p_watch_archive.set_defaults(func=cmd_watch)
 
     p_inspect = sub.add_parser("inspect", help="Deep-dive a single symbol")
     p_inspect.add_argument("symbol", type=str, help="NEPSE ticker, e.g. LEC")

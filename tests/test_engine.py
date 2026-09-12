@@ -21,6 +21,7 @@ from src.screener import (
     window_dates,
 )
 from src.signals import build_signal_rows, current_streaks
+from src.watchlist import add_note, add_symbol, archive_symbol, history
 
 
 def _row(d, cid, sym, buyer, seller, qty, rate):
@@ -612,6 +613,61 @@ class TestTurnoverMomentum:
         )
         gainers, losers = screen_turnover_momentum(short, short_window=5, base_window=22)
         assert gainers == [] and losers == []
+
+
+class TestWatchlist:
+    def test_add_reactivate_note_archive_and_history(self):
+        class Cursor:
+            def __init__(self):
+                self.rowcount = 1
+                self.description = [("symbol",), ("status",), ("thesis",), ("tags",), ("added_date",), ("updated_date",)]
+                self.calls = []
+            def execute(self, sql, params=None):
+                self.calls.append((sql, params))
+                if "SELECT note_date, note, created_at" in sql:
+                    self.description = [("note_date",), ("note",), ("created_at",)]
+                elif "SELECT symbol, status" in sql:
+                    self.description = [
+                        ("symbol",), ("status",), ("thesis",), ("tags",),
+                        ("added_date",), ("updated_date",),
+                    ]
+
+            def fetchone(self):
+                sql = self.calls[-1][0]
+                if "SELECT 1 FROM watchlist" in sql:
+                    return (1,)
+                if "SELECT symbol, status" in sql:
+                    return ("LEC", "WATCHING", "accumulation", "momentum", date(2026, 9, 11), date(2026, 9, 11))
+                return None
+
+            def fetchall(self):
+                return [(date(2026, 9, 11), "Broker flow remains positive", None)]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        class Conn:
+            def __init__(self):
+                self.cur = Cursor()
+                self.commits = 0
+
+            def cursor(self):
+                return self.cur
+
+            def commit(self):
+                self.commits += 1
+
+        conn = Conn()
+        add_symbol(conn, "LEC", thesis="accumulation", tags="momentum", note="initial scan")
+        assert add_note(conn, "LEC", "Broker flow remains positive") is True
+        assert archive_symbol(conn, "LEC") is True
+        metadata, notes = history(conn, "LEC")
+        assert metadata["symbol"] == "LEC"
+        assert notes[0]["note"] == "Broker flow remains positive"
+        assert conn.commits == 3
 
 
 class TestSymbolExclusion:

@@ -73,3 +73,25 @@ CREATE TABLE IF NOT EXISTS screener_signals_history (
 CREATE INDEX IF NOT EXISTS idx_sig_history_sym ON screener_signals_history(symbol, trade_date);
 CREATE INDEX IF NOT EXISTS idx_sig_history_broker ON screener_signals_history(broker_id, trade_date);
 CREATE INDEX IF NOT EXISTS idx_sig_history_signal ON screener_signals_history(signal, trade_date);
+
+-- User-maintained research watch journal. ``status = 'ARCHIVED'`` preserves
+-- prior research while removing a symbol from the default active watchlist.
+CREATE TABLE IF NOT EXISTS watchlist (
+    symbol      VARCHAR(20)  PRIMARY KEY,
+    status      VARCHAR(20)  NOT NULL DEFAULT 'WATCHING',
+    thesis      TEXT,
+    tags        TEXT,
+    added_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS watchlist_notes (
+    id          BIGSERIAL    PRIMARY KEY,
+    symbol      VARCHAR(20)  NOT NULL REFERENCES watchlist(symbol) ON DELETE CASCADE,
+    note_date   DATE         NOT NULL DEFAULT CURRENT_DATE,
+    note         TEXT        NOT NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_watchlist_status ON watchlist(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_watchlist_notes_symbol ON watchlist_notes(symbol, note_date DESC, id DESC);
