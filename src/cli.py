@@ -469,6 +469,28 @@ def render_streaks(rows: list[dict], min_streak: int) -> Table:
     return table
 
 
+def render_signal_performance(rows: list[dict]) -> Table:
+    table = Table(
+        title="Signal Forward Performance (close-to-close; completed observations only)",
+        title_style="bold white", header_style="bold yellow", expand=True,
+    )
+    for col, justify in [
+        ("Signal", "left"), ("Track", "left"), ("Horizon", "right"),
+        ("Samples", "right"), ("Win Rate", "right"), ("Avg Return", "right"),
+        ("Worst", "right"), ("Best", "right"), ("Best Broker*", "right"),
+    ]:
+        table.add_column(col, justify=justify)
+    for r in rows:
+        table.add_row(
+            Text(r["signal"], style=SIGNAL_STYLE.get(r["signal"], "")), r["track"],
+            f"+{r['horizon']}D", str(r["samples"]), _fmt_pct(r["win_rate_pct"]),
+            _fmt_pct(r["avg_return_pct"]), _fmt_pct(r["worst_return_pct"]),
+            _fmt_pct(r["best_return_pct"]), str(r["best_broker"] or "-"),
+        )
+    return table
+
+
+
 def render_watchlist(rows: list[dict], include_archived: bool = False) -> Table:
     title = "Research Watchlist"
     if include_archived:
@@ -478,6 +500,9 @@ def render_watchlist(rows: list[dict], include_archived: bool = False) -> Table:
         ("Symbol", "left"),
         ("Status", "left"),
         ("Close", "right"),
+        ("Trade", "left"),
+        ("PnL", "right"),
+        ("Target / Stop", "right"),
         ("1D Δ%", "right"),
         ("Rank", "right"),
         ("Tags", "left"),
@@ -490,10 +515,24 @@ def render_watchlist(rows: list[dict], include_archived: bool = False) -> Table:
         note = r["note"] or "-"
         if r["note_date"]:
             note = f"{r['note_date']}: {note}"
+        reference_price = r["exit_price"] if r["exit_price"] is not None else r["close_price"]
+        pnl = None
+        if r["entry_price"] is not None and reference_price is not None:
+            pnl = 100 * (float(reference_price) / float(r["entry_price"]) - 1)
+        trade = r["outcome"] or "-"
+        if r["entry_price"] is not None:
+            trade += f" @ {_fmt_num(r['entry_price'], 2)}"
+        target_stop = " / ".join(
+            v for v in (_fmt_num(r["target_price"], 2) if r["target_price"] is not None else None,
+                        _fmt_num(r["stop_price"], 2) if r["stop_price"] is not None else None) if v
+        ) or "-"
         table.add_row(
             r["symbol"],
             r["status"],
             _fmt_num(r["close_price"], 2),
+            trade,
+            _fmt_pct(pnl),
+            target_stop,
             _fmt_pct(r["price_change_pct"]),
             _fmt_num(r["turnover_rank"]),
             r["tags"] or "-",
@@ -514,6 +553,14 @@ def render_watch_history(metadata: dict, notes: list[dict]) -> None:
         details.append(f"[bold]Tags:[/bold] {metadata['tags']}")
     if metadata["thesis"]:
         details.append(f"[bold]Thesis:[/bold] {metadata['thesis']}")
+    if metadata["entry_price"] is not None:
+        plan = f"[bold]Trade:[/bold] {metadata['outcome'] or 'UNSET'} @ {_fmt_num(metadata['entry_price'], 2)}"
+        if metadata["target_price"] is not None or metadata["stop_price"] is not None:
+            plan += f" | Target {_fmt_num(metadata['target_price'], 2)} | Stop {_fmt_num(metadata['stop_price'], 2)}"
+        if metadata["exit_price"] is not None:
+            realized = 100 * (float(metadata["exit_price"]) / float(metadata["entry_price"]) - 1)
+            plan += f" | Exit {_fmt_num(metadata['exit_price'], 2)} | PnL {_fmt_pct(realized)}"
+        details.append(plan)
     console.print(Panel("\n".join(details), title=f"Research Journal — {metadata['symbol']}", style="bold blue"))
     if not notes:
         console.print("[dim]No journal notes yet[/dim]")
@@ -528,7 +575,10 @@ def render_watch_history(metadata: dict, notes: list[dict]) -> None:
 
 def cmd_watch(args: argparse.Namespace) -> int:
     from src.screener import _is_excluded
-    from src.watchlist import add_note, add_symbol, archive_symbol, history, list_symbols
+    from src.watchlist import (
+        add_note, add_symbol, archive_symbol, enter_position, exit_position,
+        history, list_symbols,
+    )
 
     symbol = getattr(args, "symbol", None)
     if symbol:
@@ -548,6 +598,24 @@ def cmd_watch(args: argparse.Namespace) -> int:
                 console.print(f"[yellow]{symbol} is not on the watchlist; add it first with `watch add {symbol}`[/yellow]")
                 return 2
             console.print(f"[green]Journal note added for {symbol}[/green]")
+            return 0
+        if args.watch_command == "enter":
+            if args.price <= 0 or (args.quantity is not None and args.quantity <= 0):
+                console.print("[red]--price and --quantity must be positive[/red]")
+                return 2
+            if not enter_position(conn, symbol, args.price, args.target, args.stop, args.quantity):
+                console.print(f"[yellow]{symbol} is not on the watchlist; add it first[/yellow]")
+                return 2
+            console.print(f"[green]Opened trade plan for {symbol} at {_fmt_num(args.price, 2)}[/green]")
+            return 0
+        if args.watch_command == "exit":
+            if args.price <= 0:
+                console.print("[red]--price must be positive[/red]")
+                return 2
+            if not exit_position(conn, symbol, args.price, args.outcome):
+                console.print(f"[yellow]{symbol} has no open trade to close[/yellow]")
+                return 2
+            console.print(f"[green]Closed {symbol} at {_fmt_num(args.price, 2)} ({args.outcome})[/green]")
             return 0
         if args.watch_command == "archive":
             if not archive_symbol(conn, symbol):
@@ -574,10 +642,18 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 def cmd_signals(args: argparse.Namespace) -> int:
     from src.db import get_conn
-    from src.signals import current_streaks, load_signal_history
+    from src.signals import current_streaks, load_signal_history, signal_performance
 
     conn = get_conn()
     try:
+        if args.performance:
+            rows = signal_performance(conn)
+            if not rows:
+                console.print("[dim]No completed forward observations yet; ingest more sessions and persist daily signals.[/dim]")
+                return 0
+            console.print(render_signal_performance(rows))
+            console.print("[dim]* Best Broker requires at least two completed observations.[/dim]")
+            return 0
         if args.streak:
             rows = current_streaks(conn, min_streak=max(1, args.streak))
             if not rows:
@@ -1019,6 +1095,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--track", type=str, default=None, choices=["TRACK_A", "TRACK_B", "track_a", "track_b"]
     )
     p_signals.add_argument(
+        "--performance", action="store_true",
+        help="Summarize completed +1/+5/+10/+22-session forward returns by signal",
+    )
+    p_signals.add_argument(
         "--streak",
         type=int,
         default=0,
@@ -1039,6 +1119,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_watch_note.add_argument("symbol", type=str, help="Watched NEPSE ticker")
     p_watch_note.add_argument("note", type=str, help="Observation to record")
     p_watch_note.set_defaults(func=cmd_watch)
+    p_watch_enter = p_watch_sub.add_parser("enter", help="Record an open trade plan for a watched ticker")
+    p_watch_enter.add_argument("symbol", type=str, help="Watched NEPSE ticker")
+    p_watch_enter.add_argument("--price", type=float, required=True, help="Actual entry price")
+    p_watch_enter.add_argument("--target", type=float, default=None, help="Planned target price")
+    p_watch_enter.add_argument("--stop", type=float, default=None, help="Planned stop-loss price")
+    p_watch_enter.add_argument("--quantity", type=int, default=None, help="Shares bought")
+    p_watch_enter.set_defaults(func=cmd_watch)
+    p_watch_exit = p_watch_sub.add_parser("exit", help="Close an open watched trade and record its outcome")
+    p_watch_exit.add_argument("symbol", type=str, help="Watched NEPSE ticker")
+    p_watch_exit.add_argument("--price", type=float, required=True, help="Actual exit price")
+    p_watch_exit.add_argument("--outcome", choices=["WON", "STOPPED", "CLOSED"], default="CLOSED")
+    p_watch_exit.set_defaults(func=cmd_watch)
     p_watch_list = p_watch_sub.add_parser("list", help="List active research tickers")
     p_watch_list.add_argument("--all", action="store_true", help="Include archived research tickers")
     p_watch_list.set_defaults(func=cmd_watch)

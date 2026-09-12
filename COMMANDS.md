@@ -52,8 +52,8 @@ All commands run via Docker Compose from the project root:
 | :--- | :--- | :--- |
 | **`inspect`** | Displays recent session OHLCV, multi-window broker flows, and signal logs for a symbol. | `docker compose run --rm app python -m src.cli inspect <SYMBOL> --sessions 22` |
 | **`broker`** | Deep-dive one broker's holdings across all stocks and windows (T1/T5/T22/T66). | `docker compose run --rm app python -m src.cli broker <ID> --top 5` |
-| **`signals`** | Audits historical persisted signals and multi-session accumulation streaks. | `docker compose run --rm app python -m src.cli signals` |
-| **`watch`** | Maintains your personal research watchlist and dated notes, with latest market context. | `docker compose run --rm app python -m src.cli watch list` |
+| **`signals`** | Audits signal history, streaks, and completed forward-return performance. | `docker compose run --rm app python -m src.cli signals --performance` |
+| **`watch`** | Maintains research, records trade plans/exits, and shows live or realized PnL. | `docker compose run --rm app python -m src.cli watch list` |
 
 *   `--sessions N`: Number of historical sessions to display in the OHLCV table (default: 22).
 
@@ -76,7 +76,10 @@ All commands run via Docker Compose from the project root:
 *   `watch note LEC "T22 remains positive; recheck next session"` — append a dated observation after `inspect`.
 *   `watch list` — show active research names with their latest close, daily change, turnover rank, and latest note.
 *   `watch history LEC` — review the full thesis and journal for one ticker.
+*   `watch enter LEC --price 240 --target 280 --stop 225 --quantity 100` — record an actual entry and predefined risk plan.
+*   `watch exit LEC --price 265 --outcome WON` — close the trade and retain realized PnL.
 *   `watch archive LEC` — hide a completed/invalidated idea without deleting its history.
+*   `signals --performance` — test whether each persisted signal led to positive close-to-close returns after +1/+5/+10/+22 trading sessions.
 
 ---
 

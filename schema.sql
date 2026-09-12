@@ -81,9 +81,28 @@ CREATE TABLE IF NOT EXISTS watchlist (
     status      VARCHAR(20)  NOT NULL DEFAULT 'WATCHING',
     thesis      TEXT,
     tags        TEXT,
+    entry_price NUMERIC(10, 2),
+    entry_date  DATE,
+    target_price NUMERIC(10, 2),
+    stop_price  NUMERIC(10, 2),
+    quantity    BIGINT,
+    exit_price  NUMERIC(10, 2),
+    exit_date   DATE,
+    outcome     VARCHAR(20), -- OPEN, WON, STOPPED, CLOSED
     added_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Idempotent migration for databases whose watchlist was created before trade
+-- tracking was introduced. CREATE TABLE IF NOT EXISTS does not add new columns.
+ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS entry_price NUMERIC(10, 2);
+ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS entry_date DATE;
+ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS target_price NUMERIC(10, 2);
+ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS stop_price NUMERIC(10, 2);
+ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS quantity BIGINT;
+ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS exit_price NUMERIC(10, 2);
+ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS exit_date DATE;
+ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS outcome VARCHAR(20);
 
 CREATE TABLE IF NOT EXISTS watchlist_notes (
     id          BIGSERIAL    PRIMARY KEY,

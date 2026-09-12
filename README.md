@@ -205,10 +205,10 @@ Indexes: `(symbol, trade_date)`, `(broker_id, trade_date)`,
 ### 4.5 `watchlist` and `watchlist_notes` — personal research journal
 
 `watchlist` stores one research thesis per ticker (with tags and active/archive
-status). `watchlist_notes` is an append-only, dated log of observations. The CLI
-joins the watchlist to the most recent `daily_market_summary` row so `watch list`
-shows current price, daily change, and turnover rank without requiring manual
-updates.
+status), optional entry/target/stop/quantity, and final exit outcome. `watchlist_notes`
+is an append-only, dated log of observations. The CLI joins the watchlist to the
+most recent `daily_market_summary` row so `watch list` shows current price, daily
+change, turnover rank, and live or realized percentage PnL without manual updates.
 
 > **Volume migrations for existing `pgdata`:** `schema.sql` only auto-runs on a
 > **fresh** `pgdata` volume. If you already have a running DB predating this
@@ -417,8 +417,9 @@ retroactively.
 `watch` is the durable manual layer over the automated scanners. Use it to record
 why a candidate from `momentum`, Track A/B, or `wash` deserves attention, then
 append observations after each `inspect`. It stores a thesis, tags, dated notes,
-and active/archive status in PostgreSQL. `watch list` also enriches every active
-name with its latest close, daily change, and turnover rank.
+and active/archive status in PostgreSQL. Once you take a trade, record the real
+entry, target, and stop; `watch list` then reports live PnL from the latest close
+(or realized PnL after exit).
 
 ```bash
 # Create a research item from a scanner result.
@@ -429,9 +430,17 @@ docker compose run --rm app python -m src.cli watch add LEC \
 
 # Record what changed after checking the next floorsheet.
 docker compose run --rm app python -m src.cli watch note LEC "Broker 58 stayed net positive; hold thesis."
+
+# When you act, capture the actual entry and risk plan. PnL is then automatic.
+docker compose run --rm app python -m src.cli watch enter LEC \
+  --price 240 --target 280 --stop 225 --quantity 100
 docker compose run --rm app python -m src.cli watch list
+docker compose run --rm app python -m src.cli watch exit LEC --price 265 --outcome WON
 docker compose run --rm app python -m src.cli watch history LEC
 docker compose run --rm app python -m src.cli watch archive LEC
+
+# Evaluate whether persisted screener signals have a measurable forward edge.
+docker compose run --rm app python -m src.cli signals --performance
 ```
 
 The same project-wide exclusions apply: promoter symbols, debentures, and manual

@@ -20,8 +20,8 @@ from src.screener import (
     stock_window_totals,
     window_dates,
 )
-from src.signals import build_signal_rows, current_streaks
-from src.watchlist import add_note, add_symbol, archive_symbol, history
+from src.signals import build_signal_rows, current_streaks, signal_performance
+from src.watchlist import add_note, add_symbol, archive_symbol, enter_position, exit_position, history
 
 
 def _row(d, cid, sym, buyer, seller, qty, rate):
@@ -668,6 +668,47 @@ class TestWatchlist:
         assert metadata["symbol"] == "LEC"
         assert notes[0]["note"] == "Broker flow remains positive"
         assert conn.commits == 3
+
+
+
+    def test_enter_and_exit_position(self):
+        class Cursor:
+            def __init__(self):
+                self.rowcount = 1
+            def execute(self, sql, params=None):
+                self.sql, self.params = sql, params
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+        class Conn:
+            def __init__(self): self.cur, self.commits = Cursor(), 0
+            def cursor(self): return self.cur
+            def commit(self): self.commits += 1
+        conn = Conn()
+        assert enter_position(conn, "LEC", 100, 120, 90, 10) is True
+        assert "outcome = 'OPEN'" in conn.cur.sql
+        assert exit_position(conn, "LEC", 115, "WON") is True
+        assert "outcome = %s" in conn.cur.sql
+        assert conn.commits == 2
+
+
+class TestSignalPerformance:
+    def test_horizons_are_queried(self):
+        class Cursor:
+            def __init__(self):
+                self.description = [("signal",), ("track",), ("samples",), ("win_rate_pct",), ("avg_return_pct",), ("worst_return_pct",), ("best_return_pct",), ("best_broker",)]
+                self.params = []
+            def execute(self, sql, params): self.params.append(params)
+            def fetchall(self): return [("ACTIVE_MARKUP", "TRACK_A", 3, 66.67, 2.5, -1.0, 5.0, 58)]
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+        class Conn:
+            def __init__(self): self.cur = Cursor()
+            def cursor(self): return self.cur
+        conn = Conn()
+        rows = signal_performance(conn)
+        assert [params[0] for params in conn.cur.params] == [1, 5, 10, 22]
+        assert {r["horizon"] for r in rows} == {1, 5, 10, 22}
+        assert rows[0]["best_broker"] == 58
 
 
 class TestSymbolExclusion:

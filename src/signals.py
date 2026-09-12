@@ -141,6 +141,60 @@ def load_signal_history(
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+
+def signal_performance(conn, horizons: tuple[int, ...] = (1, 5, 10, 22)) -> list[dict]:
+    """Aggregate close-to-close forward returns for persisted actionable signals.
+
+    A result needs a price on the exact Nth *trading session* after the signal;
+    incomplete recent observations are deliberately excluded from that horizon.
+    """
+    rows: list[dict] = []
+    with conn.cursor() as cur:
+        for horizon in horizons:
+            cur.execute(
+                """
+                WITH calendar AS (
+                    SELECT trade_date, ROW_NUMBER() OVER (ORDER BY trade_date) AS session_no
+                    FROM (SELECT DISTINCT trade_date FROM daily_market_summary) dates
+                ), outcomes AS (
+                    SELECT h.signal, h.track, h.broker_id,
+                           100.0 * (future.close_price / entry.close_price - 1) AS forward_return
+                    FROM screener_signals_history h
+                    JOIN calendar c ON c.trade_date = h.trade_date
+                    JOIN daily_market_summary entry
+                      ON entry.trade_date = h.trade_date AND entry.symbol = h.symbol
+                    JOIN calendar future_c ON future_c.session_no = c.session_no + %s
+                    JOIN daily_market_summary future
+                      ON future.trade_date = future_c.trade_date AND future.symbol = h.symbol
+                    WHERE entry.close_price > 0
+                )
+                SELECT signal, track, COUNT(*) AS samples,
+                       ROUND(100.0 * AVG((forward_return > 0)::int), 2) AS win_rate_pct,
+                       ROUND(AVG(forward_return), 2) AS avg_return_pct,
+                       ROUND(MIN(forward_return), 2) AS worst_return_pct,
+                       ROUND(MAX(forward_return), 2) AS best_return_pct,
+                       (
+                           SELECT broker_id FROM outcomes b
+                           WHERE b.signal = o.signal AND b.track = o.track
+                           GROUP BY broker_id
+                           HAVING COUNT(*) >= 2
+                           ORDER BY AVG(forward_return) DESC, broker_id
+                           LIMIT 1
+                       ) AS best_broker
+                FROM outcomes o
+                GROUP BY signal, track
+                ORDER BY signal, track
+                """,
+                (horizon,),
+            )
+            columns = [d[0] for d in cur.description]
+            for result in cur.fetchall():
+                row = dict(zip(columns, result))
+                row["horizon"] = horizon
+                rows.append(row)
+    return rows
+
+
 def current_streaks(conn, min_streak: int = 1) -> list[dict]:
     """Current consecutive-session streak per (symbol, broker_id, signal).
 

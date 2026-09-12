@@ -58,6 +58,52 @@ def add_note(conn, symbol: str, note: str, note_date: date | None = None) -> boo
     return True
 
 
+def enter_position(
+    conn,
+    symbol: str,
+    entry_price: float,
+    target_price: float | None = None,
+    stop_price: float | None = None,
+    quantity: int | None = None,
+    entry_date: date | None = None,
+) -> bool:
+    """Record or replace the open trade plan for an existing watched symbol."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE watchlist
+            SET entry_price = %s, entry_date = COALESCE(%s, CURRENT_DATE),
+                target_price = %s, stop_price = %s, quantity = %s,
+                exit_price = NULL, exit_date = NULL, outcome = 'OPEN',
+                status = 'WATCHING', updated_at = CURRENT_TIMESTAMP
+            WHERE symbol = %s
+            """,
+            (entry_price, entry_date, target_price, stop_price, quantity, symbol),
+        )
+        changed = cur.rowcount > 0
+    conn.commit()
+    return changed
+
+
+def exit_position(
+    conn, symbol: str, exit_price: float, outcome: str = "CLOSED", exit_date: date | None = None
+) -> bool:
+    """Close an open trade while retaining its realized result and journal."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE watchlist
+            SET exit_price = %s, exit_date = COALESCE(%s, CURRENT_DATE), outcome = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE symbol = %s AND outcome = 'OPEN'
+            """,
+            (exit_price, exit_date, outcome, symbol),
+        )
+        changed = cur.rowcount > 0
+    conn.commit()
+    return changed
+
+
 def archive_symbol(conn, symbol: str) -> bool:
     """Archive a ticker without deleting its research history."""
     with conn.cursor() as cur:
@@ -79,7 +125,8 @@ def list_symbols(conn, include_archived: bool = False) -> list[dict]:
     where = "" if include_archived else "WHERE w.status <> 'ARCHIVED'"
     sql = f"""
         SELECT w.symbol, w.status, w.thesis, w.tags, w.added_at::date AS added_date,
-               w.updated_at::date AS updated_date,
+               w.updated_at::date AS updated_date, w.entry_price, w.entry_date,
+               w.target_price, w.stop_price, w.quantity, w.exit_price, w.exit_date, w.outcome,
                m.trade_date AS market_date, m.close_price, m.price_change_pct,
                m.turnover_rank,
                n.note_date, n.note
@@ -112,8 +159,9 @@ def history(conn, symbol: str, limit: int = 100) -> tuple[dict | None, list[dict
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT symbol, status, thesis, tags, added_at::date AS added_date,
-                   updated_at::date AS updated_date
+            SELECT symbol, status, thesis, tags, entry_price, entry_date, target_price,
+                   stop_price, quantity, exit_price, exit_date, outcome,
+                   added_at::date AS added_date, updated_at::date AS updated_date
             FROM watchlist WHERE symbol = %s
             """,
             (symbol,),
