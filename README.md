@@ -7,6 +7,9 @@ non-random accumulation vs. distribution traps** among the market's most
 actively traded instruments — tracking *which brokers* are quietly putting on
 or taking off risk, rather than reacting to price alone.
 
+> 🚀 **Quick start:** a condensed CLI cheatsheet / daily operational runbook
+> lives in **[`COMMANDS.md`](./COMMANDS.md)**.
+
 ---
 
 ## 1. Project Overview & Quantitative Thesis
@@ -91,6 +94,7 @@ brokerActivity/
 ├── .dockerignore                 # excludes .git, caches, .md from build context
 ├── .gitignore
 ├── README.md                     # this file
+├── COMMANDS.md                   # daily operational CLI cheatsheet / runbook
 │
 ├── src/                          # application package (imported as `src`; PYTHONPATH=/app)
 │   ├── __init__.py               # package marker; __version__ = "1.0.0"
@@ -438,6 +442,10 @@ Notes:
 
 ---
 ## 7. CLI Usage & Command Reference
+
+> 📘 **Daily operational runbook:** a condensed command cheatsheet lives in
+> **[`COMMANDS.md`](./COMMANDS.md)** — scanners, deep dives, maintenance, and a
+> 15:30 post-market workflow at a glance.
 
 Entry point: `docker compose run --rm app python -m src.cli <command> ...`
 
