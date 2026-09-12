@@ -1,0 +1,13 @@
+# Database dumps — never commit backups to version control.
+data/backups/*.sql.gz
+
+# Host-mount live floorsheets + runtime logs — reproducible via `fetch`, not source.
+data/real/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
