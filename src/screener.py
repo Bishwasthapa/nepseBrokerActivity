@@ -650,11 +650,21 @@ def inspect_symbol(symbol: str, sessions: int = 22) -> dict:
             e["margin_pct"] = margin
             brokers.append(e)
         brokers.sort(key=lambda r: r["net_22d"], reverse=True)
+        top_holder_22d = brokers[0] if brokers else None
+        brokers_by_1d = sorted(brokers, key=lambda r: r["net_1d"], reverse=True)
+        top_holder_1d = brokers_by_1d[0] if brokers_by_1d else None
 
         from src.signals import load_signal_history
 
         sig_rows = load_signal_history(conn, symbol=symbol, limit=100)
-        return {"symbol": symbol, "recent": recent, "brokers": brokers, "signals": sig_rows}
+        return {
+            "symbol": symbol,
+            "recent": recent,
+            "brokers": brokers,
+            "signals": sig_rows,
+            "top_holder_22d": top_holder_22d,
+            "top_holder_1d": top_holder_1d,
+        }
     finally:
         conn.close()
 

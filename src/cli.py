@@ -71,12 +71,21 @@ def render_track_a(rows: list[dict], top_turnover: int = 20) -> Table:
     ]:
         table.add_column(col, justify=justify)
 
+    # Group rows by symbol so a stock's broker rows stay together. The group key
+    # is the symbol's aggregate T_1 net flow (sum across its broker rows), so the
+    # stock with the strongest net 1D leads, followed by that stock's other
+    # brokers (ordered by buyer_rank), then the next stock, etc.
+    sym_net1: dict[str, int] = {}
+    for _r in rows:
+        sym_net1[_r["symbol"]] = sym_net1.get(_r["symbol"], 0) + _r["net_t1"]
+
     ordered = sorted(
         rows,
         key=lambda r: (
-            0 if r["signal"] != "WATCH" else 1,
+            -sym_net1[r["symbol"]],                     # symbol net 1D -> strongest stock first
+            r["symbol"],                                # keep the same stock's brokers together
+            r["buyer_rank"] if r["buyer_rank"] else 99,  # broker order within a stock
             r["turnover_rank"],
-            r["buyer_rank"] if r["buyer_rank"] else 99,
         ),
     )
     seen_watch: set[str] = set()
@@ -483,6 +492,53 @@ def render_inspect(data: dict) -> None:
         )
     console.print(recent)
 
+    holder = data.get("top_holder_22d")
+    mover = data.get("top_holder_1d")
+    if holder or mover:
+        summary = Table(
+            title="Holdings Snapshot (22D holder & recent mover)",
+            title_style="bold white",
+            header_style="bold green",
+            expand=True,
+        )
+        for col, justify in [
+            ("Role", "left"),
+            ("Broker", "right"),
+            ("Net 1D", "right"),
+            ("Net 22D", "right"),
+            ("Net 66D", "right"),
+            ("Margin %", "right"),
+        ]:
+            summary.add_column(col, justify=justify)
+
+        def _row(role: str, b: dict) -> None:
+            summary.add_row(
+                role,
+                str(b["broker_id"]),
+                _fmt_num(b["net_1d"]),
+                _fmt_num(b["net_22d"]),
+                _fmt_num(b["net_66d"]),
+                _fmt_pct(b["margin_pct"]),
+            )
+
+        if holder and (mover is None or mover["broker_id"] != holder["broker_id"]):
+            _row("Longest Holder (22D)", holder)
+        if mover:
+            _row(
+                "Top Recent Mover (1D)",
+                mover,
+            )
+        if holder and mover and mover["broker_id"] == holder["broker_id"]:
+            _row("Longest Holder + Top Mover", holder)
+        console.print(summary)
+        console.print()
+
+    if data["signals"]:
+        console.print(render_signals(data["signals"], "Signal History"))
+    else:
+        console.print("[dim]No persisted signal history for this symbol[/dim]")
+    console.print()
+
     brokers = Table(
         title="Broker Net Flows (shares, across windows)",
         title_style="bold white",
@@ -508,16 +564,12 @@ def render_inspect(data: dict) -> None:
         )
     console.print(brokers)
 
-    if data["signals"]:
-        console.print(render_signals(data["signals"], "Signal History"))
-    else:
-        console.print("[dim]No persisted signal history for this symbol[/dim]")
-
 
 def cmd_inspect(args: argparse.Namespace) -> int:
     from src.screener import inspect_symbol
 
-    data = inspect_symbol(args.symbol, sessions=args.sessions)
+    symbol = args.symbol.upper()
+    data = inspect_symbol(symbol, sessions=args.sessions)
     render_inspect(data)
     return 0
 
