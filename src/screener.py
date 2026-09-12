@@ -10,6 +10,28 @@ from src.db import get_conn
 
 WINDOWS = {"T_1": 1, "T_5": 5, "T_22": 22, "T_66": 66}
 
+# Symbols to exclude from screening:
+# - Promoter stocks that END in 'P', except HIDCLP and HEIP are kept.
+# - Debentures, which carry a digit in their ticker (e.g. H8020, PRVU1).
+# Add any specific symbols to EXCLUDED_SYMBOLS for manual exclusions.
+EXCLUDED_SYMBOLS: list[str] = ["RSY"]
+PROMOTER_ALLOWLIST = {"HIDCLP", "HEIP"}
+
+
+def _is_excluded(symbol: str) -> bool:
+    """Return True when a symbol should be filtered out of screening."""
+    if symbol in EXCLUDED_SYMBOLS:
+        return True
+    if symbol in PROMOTER_ALLOWLIST:
+        return False
+    # Promoter stocks: ticker ends with 'P' (e.g. LECP, NABILP).
+    if symbol.endswith("P"):
+        return True
+    # Debentures: tickers embed a digit (e.g. H8020).
+    if any(c.isdigit() for c in symbol):
+        return True
+    return False
+
 
 def fetch_trade_dates(conn) -> list[date]:
     with conn.cursor() as cur:
@@ -88,10 +110,10 @@ def aggregate_window(rollup: pl.DataFrame, dates: list[date]) -> pl.DataFrame:
         net_qty=(pl.col("buy_qty") - pl.col("sell_qty")).sum(),
         buy_vwap=pl.when(pl.col("buy_qty").sum() == 0)
         .then(None)
-        .otherwise(pl.col("buy_amount").sum() / pl.col("buy_qty").sum()),
+        .otherwise(pl.col("buy_amount").sum() / pl.col("buy_qty").sum().cast(pl.Float64)),
         sell_vwap=pl.when(pl.col("sell_qty").sum() == 0)
         .then(None)
-        .otherwise(pl.col("sell_amount").sum() / pl.col("sell_qty").sum()),
+        .otherwise(pl.col("sell_amount").sum() / pl.col("sell_qty").sum().cast(pl.Float64)),
     )
 
 
@@ -155,13 +177,20 @@ def compute_session_match_pct(
         .select(["trade_date", "symbol", "total_qty"])
         .with_columns(pl.col("total_qty").cast(pl.Int64))
     )
-    return crossed.join(sm, on=["trade_date", "symbol"], how="left").with_columns(
+    per_session = crossed.join(sm, on=["trade_date", "symbol"], how="left").with_columns(
         total_qty=pl.col("total_qty").fill_null(0),
         session_match_pct=pl.when(
             pl.col("total_qty").fill_null(0) > 0
         )
         .then(100.0 * pl.col("crossed_qty") / pl.col("total_qty").fill_null(0))
         .otherwise(0.0),
+    )
+    # Collapse to one row per symbol: keep the session with the highest match %.
+    return (
+        per_session
+        .sort("session_match_pct", descending=True)
+        .unique(subset=["symbol"], keep="first")
+        .drop("trade_date")
     )
 
 
@@ -337,6 +366,7 @@ def screen_track_a(
     summary: pl.DataFrame,
     windows: dict[str, list[date]],
     top_turnover: int = 20,
+    top_holder_window: int = 22,
 ) -> list[dict]:
     t1 = windows["T_1"]
     if not t1:
@@ -346,7 +376,7 @@ def screen_track_a(
     if t1_sum.is_empty():
         return []
     top_universe = t1_sum.filter(pl.col("turnover_rank") <= top_turnover)
-    symbols = top_universe["symbol"].to_list()
+    symbols = [s for s in top_universe["symbol"].to_list() if not _is_excluded(s)]
 
     aggs = {name: aggregate_window(rollup, dates) for name, dates in windows.items()}
     totals = {name: stock_window_totals(summary, dates) for name, dates in windows.items()}
@@ -419,6 +449,36 @@ def screen_track_a(
             trap_row = build_row(top_seller, 0, is_seller_row=True)
             if trap_row["signal"] == "DISTRIBUTION_TRAP":
                 results.append(trap_row)
+
+    # Compute the top long-term holder per symbol (broker with the highest net
+    # in the configured top_holder_window) and their most recent one-day move.
+    # This supports the hold/sell early signal: a positive holder T1 = still accumulating (HOLD),
+    # a negative holder T1 = starting to distribute (SELL warning).
+    if results:
+        sym_df = pl.DataFrame(results)
+        net_col = f"net_t{top_holder_window}"
+        holder_name = f"top_holder_net_{top_holder_window}d"
+        # Use a distinct internal alias to avoid colliding with top_holder_net_1d
+        # when top_holder_window == 1.
+        _th_net = "__th_net__"
+        top_holders = sym_df.group_by("symbol").agg(
+            pl.col("broker_id").sort_by(net_col, descending=True).first().alias("top_holder_broker"),
+            pl.col(net_col).sort_by(net_col, descending=True).first().alias(_th_net),
+            pl.col("net_t1").sort_by(net_col, descending=True).first().alias("top_holder_net_1d"),
+        )
+        holder_map = {
+            r["symbol"]: (r["top_holder_broker"], r[_th_net], r["top_holder_net_1d"])
+            for r in top_holders.iter_rows(named=True)
+        }
+        for r in results:
+            h = holder_map.get(r["symbol"])
+            if h:
+                r["top_holder_broker_id"], r[holder_name], r["top_holder_net_1d"] = h
+            else:
+                r["top_holder_broker_id"], r[holder_name], r["top_holder_net_1d"] = None, 0, 0
+    else:
+        for r in results:
+            r["top_holder_broker_id"], r[f"top_holder_net_{top_holder_window}d"], r["top_holder_net_1d"] = None, 0, 0
     return results
 
 
@@ -464,7 +524,7 @@ def screen_track_b(
         for r in t1_sum.iter_rows(named=True)
     }
     results: list[dict] = []
-    symbols = t22_tot["symbol"].to_list()
+    symbols = [s for s in t22_tot["symbol"].to_list() if not _is_excluded(s)]
     for sym in symbols:
         tot = t22_tot.filter(pl.col("symbol") == sym)
         if tot.height == 0:
@@ -523,6 +583,7 @@ def run_screener(
     as_of: date | None = None,
     persist: bool = True,
     top_turnover: int = 20,
+    top_holder_window: int = 22,
 ) -> tuple[list[dict], list[dict], dict]:
     """Run both tracks. If ``as_of`` is given, restrict to sessions <= that date
     (point-in-time backtest) and treat its last session as the T_1 date. When
@@ -556,7 +617,7 @@ def run_screener(
                 pl.col("total_turnover").cast(pl.Float64),
                 pl.col("turnover_rank").cast(pl.Int32),
             )
-        track_a = screen_track_a(rollup, summary, windows, top_turnover)
+        track_a = screen_track_a(rollup, summary, windows, top_turnover, top_holder_window)
         track_b = screen_track_b(rollup, summary, windows)
         t1 = windows["T_1"][-1] if windows["T_1"] else None
 
@@ -573,6 +634,7 @@ def run_screener(
             "as_of": str(as_of) if as_of else None,
             "persisted": persisted,
             "top_turnover": top_turnover,
+            "top_holder_window": top_holder_window,
             "windows": {k: [str(d) for d in v] for k, v in windows.items()},
         }
         return track_a, track_b, meta

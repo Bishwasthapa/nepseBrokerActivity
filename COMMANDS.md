@@ -19,14 +19,26 @@ All commands run via Docker Compose from the project root:
 *   `--short N`: Short lookback window in trading sessions (`5` = 1 trading week).
 *   `--base N` / `--window N`: Baseline/lookback window in trading sessions (`22` = 1 trading month, `66` = 1 quarter).
 *   `--top N`: Adjusts Track A turnover universe depth (default: 20).
+*   `--top-holder-window N`: Window that defines the Track A **Top Holder**
+    (`1|5|22|66`; default: `22`). Column headers update to match, e.g.
+    `Top Holder (T_66D)`.
 *   `--no-persist`: Runs the screener without upserting signals into `screener_signals_history`.
 *   `--as-of YYYY-MM-DD`: Backtests the market as of a specific past session close.
+
+> **Track A "Top Holder" columns:** the `run` output's Track A table includes
+> **Top Holder** (the broker with the highest net in the configured window, i.e.
+> the dominant long-term accumulator) and **Holder T1** (that holder's latest
+> one-day net, shown only on its own row). Use `--top-holder-window N` to pick
+> which window defines the holder (default `22`). Quick hold/sell read:
+> **Holder T1 > 0 → still accumulating (HOLD)**; **Holder T1 < 0 → starting to
+> distribute (SELL warning)**.
 
 ### Examples
 *   `run` — today's screen: `docker compose run --rm app python -m src.cli run`
 *   `run --top 40` — widen the Track A turnover universe to the top 40 symbols.
 *   `run --no-persist` — dry-run; prints signals but writes nothing to `screener_signals_history`.
 *   `run --as-of 2026-09-10` — backtest the market as of a past session close.
+*   `run --top-holder-window 66` — define the Top Holder by 66D net instead of the 22D default.
 *   `momentum` / `momentum --short 5 --base 22` — 5-vs-22-day rotation (defaults; `--base 66` = quarterly).
 *   `momentum --short 10 --base 66 --as-of 2026-09-10` — as-of variant of the above.
 *   `wash` / `wash --window 22` — detect internal matching over the last 22 sessions (default).
@@ -39,9 +51,15 @@ All commands run via Docker Compose from the project root:
 | Command | Description | Default Syntax |
 | :--- | :--- | :--- |
 | **`inspect`** | Displays recent session OHLCV, multi-window broker flows, and signal logs for a symbol. | `docker compose run --rm app python -m src.cli inspect <SYMBOL> --sessions 22` |
+| **`broker`** | Deep-dive one broker's holdings across all stocks and windows (T1/T5/T22/T66). | `docker compose run --rm app python -m src.cli broker <ID> --top 5` |
 | **`signals`** | Audits historical persisted signals and multi-session accumulation streaks. | `docker compose run --rm app python -m src.cli signals` |
 
 *   `--sessions N`: Number of historical sessions to display in the OHLCV table (default: 22).
+
+### Broker deep-dive flags
+*   `broker <ID>`: Broker ID to inspect (required).
+*   `--top N`: Number of top holdings (by net T22) to show (default: 5).
+*   `--sessions N`: Session lookback for the deep-dive (default: 66).
 
 ### Examples
 *   `inspect LEC` — deep dive on LEC over the last 22 sessions.
@@ -51,6 +69,8 @@ All commands run via Docker Compose from the project root:
 *   `signals --track TRACK_A --limit 50` — latest 50 Track A signals.
 *   `signals --streak 3` — tickers currently accumulating for 3+ consecutive sessions.
 *   `signals --signal ACTIVE_MARKUP --broker 38` — combine signal-type and broker filters.
+*   `broker 58` — deep dive on broker 58's top 5 holdings (last 66 sessions).
+*   `broker 58 --top 10 --sessions 22` — top 10 holdings over the last 22 sessions.
 
 ---
 

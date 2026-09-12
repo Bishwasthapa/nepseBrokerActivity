@@ -50,13 +50,15 @@ def _fmt_pct(v) -> str:
     return f"{float(v):+.2f}%"
 
 
-def render_track_a(rows: list[dict], top_turnover: int = 20) -> Table:
+def render_track_a(rows: list[dict], top_turnover: int = 20, top_holder_window: int = 22) -> Table:
     table = Table(
         title=f"Track A — Top {top_turnover} Turnover Momentum & Traps",
         title_style="bold white",
         header_style="bold yellow",
         expand=True,
     )
+    holder_col_name = f"Top Holder (T_{top_holder_window}D)"
+    holder_net_key = f"top_holder_net_{top_holder_window}d"
     for col, justify in [
         ("Rank", "right"),
         ("Symbol", "left"),
@@ -68,6 +70,7 @@ def render_track_a(rows: list[dict], top_turnover: int = 20) -> Table:
         ("Margin %", "right"),
         ("T1 Δ%", "right"),
         ("Signal", "left"),
+        (holder_col_name, "right"),
     ]:
         table.add_column(col, justify=justify)
 
@@ -108,6 +111,7 @@ def render_track_a(rows: list[dict], top_turnover: int = 20) -> Table:
             _fmt_pct(r["margin_pct"]),
             _fmt_pct(r["t1_change_pct"]),
             Text(r["signal"], style=style),
+            str(r["top_holder_broker_id"]) if r["top_holder_broker_id"] else "-",
         )
     return table
 
@@ -161,7 +165,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             return 2
     t0 = perf_counter()
     track_a, track_b, meta = run_screener(
-        as_of=as_of, persist=not args.no_persist, top_turnover=args.top
+        as_of=as_of, persist=not args.no_persist, top_turnover=args.top,
+        top_holder_window=args.top_holder_window
     )
     elapsed = perf_counter() - t0
     mode = f"  as_of={meta['as_of']}" if meta.get("as_of") else ""
@@ -173,7 +178,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         f"elapsed={elapsed:.2f}s"
     )
     console.print(Panel(header, style="bold blue"))
-    console.print(render_track_a(track_a, args.top))
+    console.print(render_track_a(track_a, args.top, top_holder_window=args.top_holder_window))
     console.print()
     console.print(render_track_b(track_b))
     a_hits = [r for r in track_a if r["signal"] != "WATCH"]
@@ -347,6 +352,41 @@ def cmd_wash(args: argparse.Namespace) -> int:
     finally:
         conn.close()
 
+    # Filter out promoter and debenture symbols automatically
+    from src.screener import _is_excluded
+
+    # Get unique symbols from the rollup, excluding promoters/debentures
+    unique_symbols = set()
+    if not rollup.is_empty():
+        unique_symbols = set(sym for sym in rollup["symbol"].unique().to_list() if not _is_excluded(sym))
+
+    if not args.all:
+        # Broker-level: filter by gross_volume (matched_qty * 2) >= min_qty
+        if not broker_match.is_empty() and unique_symbols:
+            broker_match = broker_match.filter(
+                pl.col("broker_id").is_in(
+                    rollup.filter(
+                        (pl.col("symbol").is_in(unique_symbols))
+                        & (pl.col("matched_qty") * 2 >= args.min_qty)
+                    )["broker_id"].unique().to_list()
+                )
+            )
+        # Session-level: filter by crossed_qty >= min_qty (wash volume, not market volume)
+        if not session_match.is_empty() and unique_symbols:
+            session_match = session_match.filter(
+                pl.col("symbol").is_in(unique_symbols)
+                & (pl.col("crossed_qty") >= args.min_qty)
+            )
+    else:
+        # Even with --all, still exclude promoters/debentures
+        if not broker_match.is_empty() and unique_symbols:
+            broker_match = broker_match.filter(
+                pl.col("broker_id").is_in(
+                    rollup.filter(pl.col("symbol").is_in(unique_symbols))["broker_id"].unique().to_list()
+                )
+            )
+        if not session_match.is_empty() and unique_symbols:
+            session_match = session_match.filter(pl.col("symbol").is_in(unique_symbols))
     latest_session = window_dates_src[-1]
     console.print(
         render_wash(
@@ -574,6 +614,156 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def render_broker(broker_id: int, holdings: list[dict], sessions: int, top: int) -> None:
+    """Render a broker deep-dive table showing top positions across windows."""
+    console.print()
+    if not holdings:
+        console.print(
+            f"[yellow]No holdings found for broker {broker_id} in the last "
+            f"{sessions} sessions[/yellow]"
+        )
+        return
+
+    table = Table(
+        title=f"Broker {broker_id} — Top {min(top, len(holdings))} Holdings (last {sessions} sessions)",
+        title_style="bold white",
+        header_style="bold yellow",
+        expand=True,
+    )
+    for col, justify in [
+        ("Rank", "right"),
+        ("Symbol", "left"),
+        ("Net T1", "right"),
+        ("Net T5", "right"),
+        ("Net T22", "right"),
+        ("Net T66", "right"),
+        ("Margin %", "right"),
+    ]:
+        table.add_column(col, justify=justify)
+
+    for rank, h in enumerate(holdings[:top], 1):
+        table.add_row(
+            str(rank),
+            h["symbol"],
+            _fmt_num(h["net_t1"]),
+            _fmt_num(h["net_t5"]),
+            _fmt_num(h["net_t22"]),
+            _fmt_num(h["net_t66"]),
+            _fmt_pct(h["margin_pct"]),
+        )
+    console.print(table)
+    console.print()
+
+    # Summary stats across the full (pre-truncation) holdings set.
+    t1_buys = sum(h["net_t1"] for h in holdings if h["net_t1"] > 0)
+    t1_sells = abs(sum(h["net_t1"] for h in holdings if h["net_t1"] < 0))
+    t22_buys = sum(h["net_t22"] for h in holdings if h["net_t22"] > 0)
+    t22_sells = abs(sum(h["net_t22"] for h in holdings if h["net_t22"] < 0))
+    net_t22 = sum(h["net_t22"] for h in holdings)
+    console.print(f"[bold]Activity Summary ({len(holdings)} positions over last {sessions} sessions):[/bold]")
+    console.print(
+        f"  T1 Buys: {_fmt_num(t1_buys)} | T1 Sells: {_fmt_num(t1_sells)}"
+    )
+    console.print(
+        f"  T22 Buys: {_fmt_num(t22_buys)} | T22 Sells: {_fmt_num(t22_sells)}"
+        f" | Net T22: {net_t22:+,}"
+    )
+
+
+def cmd_broker(args: argparse.Namespace) -> int:
+    from src.screener import (
+        aggregate_window,
+        fetch_trade_dates,
+        load_rollup,
+        load_summary,
+    )
+
+    broker_id = args.broker_id
+    top = args.top
+    sessions = args.sessions
+
+    conn = get_conn()
+    try:
+        dates = fetch_trade_dates(conn)
+        window_dates = dates[-sessions:] if sessions and dates else []
+        if not window_dates:
+            console.print("[yellow]No trade data available for the requested window[/yellow]")
+            return 0
+
+        rollup = load_rollup(conn, window_dates)
+        summary = load_summary(conn, window_dates)
+        t1_date = window_dates[-1]
+
+        # Precompute one aggregate per window (all symbols/brokers at once).
+        window_aggs: dict[str, list[date]] = {
+            "T_1": window_dates[-1:],
+            "T_5": window_dates[-5:],
+            "T_22": window_dates[-22:],
+            "T_66": window_dates[-66:],
+        }
+        aggs = {
+            name: aggregate_window(rollup, dts) for name, dts in window_aggs.items()
+        }
+        if aggs["T_1"].is_empty():
+            console.print(f"[yellow]No activity today for the requested window[/yellow]")
+            return 0
+
+        # Symbol -> close on the latest session for margin computation.
+        t1_sum = summary.filter(pl.col("trade_date") == t1_date)
+        close_map = {
+            r["symbol"]: float(r["close_price"])
+            for r in t1_sum.iter_rows(named=True)
+            if r.get("close_price") is not None
+        }
+
+        # All symbols this broker traded on the latest session (excluding
+        # promoter stocks and debentures).
+        from src.screener import _is_excluded as _sym_excluded
+        symbols = [
+            s
+            for s in aggs["T_1"].filter(pl.col("broker_id") == broker_id)["symbol"].to_list()
+            if not _sym_excluded(s)
+        ]
+        if not symbols:
+            console.print(
+                f"[yellow]No activity found for broker {broker_id} on {t1_date}[/yellow]"
+            )
+            return 0
+
+        holdings: list[dict] = []
+        for sym in symbols:
+            nets: dict[str, int] = {}
+            vwap = None
+            for name, agg in aggs.items():
+                hit = agg.filter(
+                    (pl.col("symbol") == sym) & (pl.col("broker_id") == broker_id)
+                )
+                nets[name] = int(hit["net_qty"][0]) if hit.height else 0
+                if hit.height and name == "T_66":
+                    vwap = hit["buy_vwap"][0]
+            close = close_map.get(sym)
+            margin = None
+            if vwap and close:
+                margin = (close - float(vwap)) / float(vwap) * 100.0
+            holdings.append(
+                {
+                    "symbol": sym,
+                    "net_t1": nets["T_1"],
+                    "net_t5": nets["T_5"],
+                    "net_t22": nets["T_22"],
+                    "net_t66": nets["T_66"],
+                    "margin_pct": margin,
+                }
+            )
+
+        # Rank by net T22 (conviction) across the requested window.
+        holdings.sort(key=lambda h: h["net_t22"], reverse=True)
+        render_broker(broker_id, holdings, sessions, top)
+        return 0
+    finally:
+        conn.close()
+
+
 def cmd_seed(args: argparse.Namespace) -> int:
     from src.mock_generator import seed_database
 
@@ -693,6 +883,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=20,
         help="Number of top turnover stocks to scan in Track A (default: 20)",
     )
+    p_run.add_argument(
+        "--top-holder-window",
+        type=int,
+        choices=[1, 5, 22, 66],
+        default=22,
+        help="Window that defines the Top Holder (default: 22)",
+    )
     p_run.set_defaults(func=cmd_run)
 
     p_seed = sub.add_parser("seed", help="Generate and load synthetic floorsheet data")
@@ -732,6 +929,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_inspect.add_argument("--sessions", type=int, default=22, help="Recent sessions to show")
     p_inspect.set_defaults(func=cmd_inspect)
 
+    p_broker = sub.add_parser("broker", help="Deep-dive broker activity")
+    p_broker.add_argument("broker_id", type=int, help="Broker ID to inspect")
+    p_broker.add_argument("--top", type=int, default=5, help="Number of top holdings to show (default: 5)")
+    p_broker.add_argument("--sessions", type=int, default=66, help="Recent sessions to show")
+    p_broker.set_defaults(func=cmd_broker)
+
     p_mom = sub.add_parser(
         "momentum", help="Scan multi-window turnover momentum gainers / losers"
     )
@@ -751,6 +954,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_wash.add_argument(
         "--as-of", type=str, default=None, help="Point-in-time calculation as of YYYY-MM-DD"
+    )
+    p_wash.add_argument(
+        "--min-qty", type=int, default=5000, help="Minimum total quantity to include (default: 5000)"
+    )
+    p_wash.add_argument(
+        "--all", action="store_true", help="Show all results (ignore quantity threshold)"
     )
     p_wash.set_defaults(func=cmd_wash)
 

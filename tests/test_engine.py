@@ -319,6 +319,21 @@ class TestScreeners:
         assert lec[0]["net_t22"] > 0
         assert lec[0]["net_t66"] > 0
 
+    def test_track_a_top_holder_per_symbol(self):
+        rollup, summary, windows = _mini_market()
+        rows = screen_track_a(rollup, summary, windows)
+        # Broker 58 is the dominant net T_22 accumulator on LEC; broker 2 is a net seller.
+        lec_rows = [r for r in rows if r["symbol"] == "LEC"]
+        assert lec_rows, "expected LEC rows in Track A"
+        assert all(r["top_holder_broker_id"] == 58 for r in lec_rows)
+        # The top holder's own row carries a positive one-day net (still accumulating -> HOLD).
+        holder_row = next(r for r in lec_rows if r["broker_id"] == 58)
+        assert holder_row["top_holder_net_1d"] > 0
+        assert holder_row["top_holder_net_22d"] > 0
+        # Non-holder rows expose the holder id but leave Holder T1 unset on render.
+        non_holder = next(r for r in lec_rows if r["broker_id"] != 58)
+        assert non_holder["top_holder_broker_id"] == 58
+
     def test_track_b_flags_hidcl(self):
         rollup, summary, windows = _mini_market()
         rows = screen_track_b(rollup, summary, windows)
@@ -597,3 +612,34 @@ class TestTurnoverMomentum:
         )
         gainers, losers = screen_turnover_momentum(short, short_window=5, base_window=22)
         assert gainers == [] and losers == []
+
+
+class TestSymbolExclusion:
+    """Promoter stocks (except HIDCLP/HEIP) and debentures are filtered out."""
+
+    def test_promoter_suffix_excluded(self):
+        from src.screener import _is_excluded
+        assert _is_excluded("LECP") is True      # promoter
+        assert _is_excluded("NABILP") is True    # promoter
+        assert _is_excluded("HIDCLP") is False   # allowlisted
+        assert _is_excluded("HEIP") is False     # allowlisted
+
+    def test_debenture_with_digit_excluded(self):
+        from src.screener import _is_excluded
+        assert _is_excluded("H8020") is True     # debenture, digit in ticker
+        assert _is_excluded("PRVU2084") is True  # debenture
+        assert _is_excluded("NBLD83") is True    # debenture, digit embedded
+
+    def test_regular_equities_included(self):
+        from src.screener import _is_excluded
+        assert _is_excluded("LEC") is False
+        assert _is_excluded("NABIL") is False
+        assert _is_excluded("PRVU") is False
+
+    def test_excluded_symbols_override(self):
+        from src.screener import EXCLUDED_SYMBOLS, _is_excluded
+        EXCLUDED_SYMBOLS.append("GHOST")
+        try:
+            assert _is_excluded("GHOST") is True
+        finally:
+            EXCLUDED_SYMBOLS.remove("GHOST")

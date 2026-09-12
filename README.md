@@ -328,12 +328,40 @@ All per-broker metrics over each window via `aggregate_window()`:
   configurable per run and **defaulting to the top 20** symbols by T_1 turnover
   (set via the CLI `--top N` flag; the table title and header reflect the
   active threshold, e.g. `Track A — Top 20 Turnover Momentum & Traps`).
+- **Instrument exclusions:** promoter stocks and debentures are dropped from the
+  candidate universe before ranking. A promoter is any ticker ending in `P`
+  (e.g. `LECP`, `NABILP`) **except** `HIDCLP` and `HEIP`, which are kept.
+  Debentures carry a digit in their ticker (e.g. `H8020`, `PRVU2084`) and are
+  excluded. Other specific symbols can be added to `EXCLUDED_SYMBOLS` in
+  `src/screener.py`.
 - For each symbol, take the **top-3 net buyers** in T_1 plus the **single top
   seller** (as a potential trap row).
 - Evaluate `classify_track_a()` with the windows, buy-VWAP margin, and the
   stock's T_1 % change.
 - Rows that fail all classifiers fall back to `WATCH`; in the rendered table
   only `buyer_rank == 1` `WATCH` rows are shown (to avoid noise).
+
+**Top-Holder early signal (Hold / Sell):** every symbol's rows carry two extra
+columns, populated by grouping the symbol's broker rows and picking the broker
+with the **highest net in the configured top-holder window** (default `T_22`)
+— the *long-term holder*. The window is configurable via `run --top-holder-window N`
+(`1|5|22|66`); column headers update to match, e.g. `Top Holder (T_66D)`:
+
+| Column | Meaning |
+| :--- | :--- |
+| **Top Holder** | Broker ID with the greatest `net_t{window}` for that symbol (the longest-held, dominant accumulator). |
+| **Holder T1** | That holder's **one-day net** (`net_t1`). Shown only on the holder's own row; `-` elsewhere. |
+
+Use it as a **single-glance hold/sell** read on the dominant holder's *recent*
+intent:
+
+- **Holder T1 > 0** → still **accumulating** → **HOLD** (position intact).
+- **Holder T1 < 0** → **starting to distribute** → **SELL warning** (the big
+  holder is beginning to offload, even if the stock looks strong on the day).
+
+This is the key insight pairing **top turnover** (liquidity filter) with
+**broker intent** (early signal): the broker who has quietly built the largest
+multi-window position, and what they did *today*.
 
 ### 6.4 Signal taxonomy
 
@@ -464,8 +492,9 @@ docker compose run --rm app python -m src.cli fetch --today
 # 4. Run the screener (persists signals)
 docker compose run --rm app python -m src.cli run
 
-# 5. Inspect the footprint + detect live streaks
+# 5. Inspect a symbol's footprint, a broker's holdings, + detect live streaks
 docker compose run --rm app python -m src.cli inspect LEC
+docker compose run --rm app python -m src.cli broker 58 --top 5
 docker compose run --rm app python -m src.cli signals --streak 2
 
 # 6. Test
