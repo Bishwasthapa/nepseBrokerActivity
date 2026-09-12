@@ -22,6 +22,16 @@ All commands run via Docker Compose from the project root:
 *   `--no-persist`: Runs the screener without upserting signals into `screener_signals_history`.
 *   `--as-of YYYY-MM-DD`: Backtests the market as of a specific past session close.
 
+### Examples
+*   `run` — today's screen: `docker compose run --rm app python -m src.cli run`
+*   `run --top 40` — widen the Track A turnover universe to the top 40 symbols.
+*   `run --no-persist` — dry-run; prints signals but writes nothing to `screener_signals_history`.
+*   `run --as-of 2026-09-10` — backtest the market as of a past session close.
+*   `momentum` / `momentum --short 5 --base 22` — 5-vs-22-day rotation (defaults; `--base 66` = quarterly).
+*   `momentum --short 10 --base 66 --as-of 2026-09-10` — as-of variant of the above.
+*   `wash` / `wash --window 22` — detect internal matching over the last 22 sessions (default).
+*   `wash --window 66 --as-of 2026-09-10` — broader window, point-in-time.
+
 ---
 
 ## 2. Deep Dives & Audits
@@ -32,6 +42,15 @@ All commands run via Docker Compose from the project root:
 | **`signals`** | Audits historical persisted signals and multi-session accumulation streaks. | `docker compose run --rm app python -m src.cli signals` |
 
 *   `--sessions N`: Number of historical sessions to display in the OHLCV table (default: 22).
+
+### Examples
+*   `inspect LEC` — deep dive on LEC over the last 22 sessions.
+*   `inspect NRN --sessions 66` — show 66 sessions of OHLCV and multi-window broker flows.
+*   `signals` — audit the full persisted signal history.
+*   `signals --symbol LEC` — filter signal history to a single ticker.
+*   `signals --track TRACK_A --limit 50` — latest 50 Track A signals.
+*   `signals --streak 3` — tickers currently accumulating for 3+ consecutive sessions.
+*   `signals --signal ACTIVE_MARKUP --broker 38` — combine signal-type and broker filters.
 
 ---
 
@@ -48,6 +67,14 @@ All commands run via Docker Compose from the project root:
 *   `fetch --days N`: Backfills and ingests the last `N` trading sessions from the GitHub open-data repo.
 *   `ingest --file PATH`: Loads a specific existing CSV from disk (idempotent; replaces that date's rows).
 *   `ingest --file data/real/YYYY-MM-DD.csv` is how you backfill/repair a single missed or stale session.
+
+### Examples
+*   `fetch --today` — download and ingest the latest trading day (the daily recipe).
+*   `fetch --days 30` — backfill and ingest the last 30 trading sessions from the GitHub open-data repo.
+*   `ingest --file data/real/2026-09-11.csv` — load one existing CSV (idempotent; replaces that date's rows).
+*   `seed` — init / rebuild the schema (default 66 days).
+*   `seed --days 90 --seed 42` — reseed 90 days using a fixed RNG seed.
+*   `./scripts/backup_db.sh` — timestamped PostgreSQL dump; keeps the last 7 days of archives.
 
 ---
 
@@ -73,3 +100,41 @@ Run in sequence after market close:
 
 6. **Inspect High-Conviction Tickers:**
    `docker compose run --rm app python -m src.cli inspect <SYMBOL>`
+
+---
+
+## 5. Scheduling (cron)
+
+NEPSE trades roughly 11:00–15:00 local time (NPT, UTC+5:45), so the post-market
+runbook runs ~15:30 NPT. The project ships a wrapper that runs the daily workflow
+(`fetch --today` → `run --no-persist` → `momentum` → `wash`) and appends a log:
+
+```bash
+# ~/bin or crontab PATH must include docker/docker-compose.
+/mnt/personal/stock/brokerActivity/scripts/daily_market.sh
+```
+
+Add the daily cron (adjust time to your host's timezone; NPT = UTC+5:45):
+
+```
+# Every weekday at 15:30 NPT (09:45 UTC if your host is UTC).
+30 15 * * 1-5 cd /mnt/personal/stock/brokerActivity && ./scripts/daily_market.sh >> logs/daily_market.log 2>&1
+```
+
+Use `crontab -e` if you only need it for today's user, or install under
+`/etc/cron.d/` (root) if system-wide. Set `TZ=Asia/Kathmandu` on a UTC host if you
+want the literal wall-clock to match NPT.
+
+Optionally add a weekly backup (Sundays 04:00):
+
+```
+# Weekly Postgres dump; the script prunes archives older than 7 days.
+0 4 * * 0 /mnt/personal/stock/brokerActivity/scripts/backup_db.sh >> /mnt/personal/stock/brokerActivity/logs/backup.log 2>&1
+```
+
+Notes:
+*   `1-5` runs Mon–Fri; NEPSE market holidays still fire these jobs and will simply
+    log "No floorsheet available for today" / skip — harmless.
+*   Make sure cron's `PATH` (and `docker` group membership) allows `docker compose` to run non-interactively.
+*   `run --no-persist` previews signals without writing; drop the flag in the wrapper
+    if you want signals persisted every day.
