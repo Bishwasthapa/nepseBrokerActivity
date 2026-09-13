@@ -1,0 +1,343 @@
+"""Minimal web layer: serve saved report snapshots + a JSON API.
+
+The engine stays a CLI/batch pipeline; this module only serves already-computed
+or on-demand-computed data. Every API endpoint accepts the same parameters as
+its CLI command and caches the result as a JSON snapshot under ``reports/`` so
+that re-running the exact same request against unchanged data returns instantly
+instead of recomputing.
+
+Start with:  python -m src.cli serve  (or ``docker compose run ... serve``)
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from datetime import date
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
+
+import polars as pl
+
+from src import reports
+from src.db import get_conn
+from src.screener import (
+    load_top_turnover,
+    run_screener,
+    screen_turnover_momentum,
+    wash_report,
+    broker_holdings,
+    fetch_trade_dates,
+    load_rollup,
+    load_summary,
+    inspect_symbol,
+)
+
+
+def _parse_date(value) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _first(query: dict, key: str, default=None):
+    vals = query.get(key)
+    if not vals:
+        return default
+    return vals[0] if isinstance(vals, list) else vals
+
+
+def _int(query: dict, key: str, default: int) -> int:
+    try:
+        return int(_first(query, key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _bool(query: dict, key: str, default: bool = False) -> bool:
+    v = str(_first(query, key, default)).lower()
+    return v in ("1", "true", "yes", "on")
+
+
+class Handler(BaseHTTPRequestHandler):
+
+    # ---- helpers -----------------------------------------------------------
+    def _send_json(self, obj, status: int = 200) -> None:
+        body = reports.to_json(obj).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_text(self, text: str, content_type: str, status: int = 200) -> None:
+        body = text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_404(self, msg: str = "Not found") -> None:
+        self._send_text(msg, "text/plain; charset=utf-8", 404)
+
+    def _cached(self, command: str, params: dict, compute) -> dict:
+        """Return compute(conn) result, serving the stored snapshot when valid."""
+        cached = reports.load_snapshot(command, params)
+        if cached is not None:
+            return {"cached": True, "params": params, "data": cached}
+        conn = get_conn()
+        try:
+            data = compute(conn)
+        finally:
+            conn.close()
+        reports.save_snapshot(command, params, data)
+        return {"cached": False, "params": params, "data": data}
+
+    def log_message(self, fmt, *args):
+        # keep the console readable
+        print(f"[web] {self.address_string()} {fmt % args}")
+
+    # ---- API endpoints -----------------------------------------------------
+    def api_top(self, q):
+        as_of = _parse_date(_first(q, "as_of"))
+        limit = _int(q, "limit", 20)
+        params = {"as_of": as_of.isoformat() if as_of else None, "limit": limit}
+        return self._cached(
+            "top",
+            params,
+            lambda conn: load_top_turnover(conn, as_of=as_of, limit=limit),
+        )
+
+    def api_run(self, q):
+        as_of = _parse_date(_first(q, "as_of"))
+        top = _int(q, "top", 20)
+        window = _int(q, "top_holder_window", 22)
+        no_persist = _bool(q, "no_persist", True)
+        params = {
+            "as_of": as_of.isoformat() if as_of else None,
+            "top": top,
+            "top_holder_window": window,
+        }
+
+        def compute(conn):
+            track_a, track_b, meta = run_screener(
+                as_of=as_of,
+                persist=not no_persist,
+                top_turnover=top,
+                top_holder_window=window,
+            )
+            return {"meta": meta, "track_a": track_a, "track_b": track_b}
+
+        return self._cached("run", params, compute)
+
+    def api_momentum(self, q):
+        as_of = _parse_date(_first(q, "as_of"))
+        short = _int(q, "short", 5)
+        base = _int(q, "base", 22)
+        params = {"as_of": as_of.isoformat() if as_of else None, "short": short, "base": base}
+
+        def compute(conn):
+            dates = fetch_trade_dates(conn)
+            if as_of is not None:
+                dates = [d for d in dates if d <= as_of]
+            needed = dates[-max(base, short):]
+            summary = load_summary(conn, needed)
+            rollup = load_rollup(conn, needed)
+            if not summary.is_empty():
+                summary = summary.with_columns(
+                    pl.col("close_price").cast(pl.Float64),
+                    pl.col("total_turnover").cast(pl.Float64),
+                    pl.col("turnover_rank").cast(pl.Int32),
+                )
+            if not rollup.is_empty():
+                rollup = rollup.with_columns(
+                    pl.col("broker_id").cast(pl.Int32),
+                    pl.col("buy_qty").cast(pl.Int64),
+                    pl.col("sell_qty").cast(pl.Int64),
+                    pl.col("self_trade_qty").cast(pl.Int64),
+                    pl.col("buy_amount").cast(pl.Float64),
+                    pl.col("sell_amount").cast(pl.Float64),
+                )
+            gainers, losers = screen_turnover_momentum(
+                summary,
+                short_window=short,
+                base_window=base,
+                rollup=rollup,
+            )
+            return {"gainers": gainers, "losers": losers}
+
+        return self._cached("momentum", params, compute)
+
+    def api_wash(self, q):
+        as_of = _parse_date(_first(q, "as_of"))
+        window = _int(q, "window", 22)
+        min_qty = _int(q, "min_qty", 5000)
+        include_all = _bool(q, "all", False)
+        params = {
+            "as_of": as_of.isoformat() if as_of else None,
+            "window": window,
+            "min_qty": min_qty,
+            "all": include_all,
+        }
+        return self._cached(
+            "wash",
+            params,
+            lambda conn: wash_report(
+                conn, window=window, min_qty=min_qty, include_all=include_all, as_of=as_of
+            ),
+        )
+
+    def api_inspect(self, symbol: str, q):
+        sessions = _int(q, "sessions", 22)
+        params = {"symbol": symbol.upper(), "sessions": sessions}
+        return self._cached(
+            "inspect",
+            params,
+            lambda conn: inspect_symbol(symbol.upper(), sessions=sessions),
+        )
+
+    def api_broker(self, broker_id: int, q):
+        sessions = _int(q, "sessions", 66)
+        top = _int(q, "top", 5)
+        params = {"broker_id": broker_id, "sessions": sessions, "top": top}
+        return self._cached(
+            "broker",
+            params,
+            lambda conn: {
+                "broker_id": broker_id,
+                "sessions": sessions,
+                "top": top,
+                "holdings": broker_holdings(conn, broker_id, sessions)[:top],
+            },
+        )
+
+    def api_signals(self, q):
+        from src.signals import current_streaks, load_signal_history, signal_performance
+
+        if _bool(q, "performance", False):
+            params = {"performance": True}
+            return self._cached(
+                "signals",
+                params,
+                lambda conn: {"performance": signal_performance(conn)},
+            )
+        streak = _int(q, "streak", 0)
+        symbol = _first(q, "symbol") or None
+        broker = _int(q, "broker", 0) or None
+        signal = _first(q, "signal") or None
+        track = _first(q, "track") or None
+        limit = _int(q, "limit", 100)
+        params = {
+            "streak": streak,
+            "symbol": symbol,
+            "broker": broker,
+            "signal": signal,
+            "track": track,
+            "limit": limit,
+        }
+        if streak:
+            return self._cached(
+                "signals",
+                params,
+                lambda conn: {"streaks": current_streaks(conn, min_streak=max(1, streak))},
+            )
+        return self._cached(
+            "signals",
+            params,
+            lambda conn: {
+                "rows": load_signal_history(
+                    conn,
+                    symbol=symbol,
+                    broker_id=broker,
+                    signal=signal,
+                    track=track,
+                    limit=limit,
+                )
+            },
+        )
+
+    # ---- routing -----------------------------------------------------------
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        q = parse_qs(parsed.query)
+
+        # Landing page
+        if path in ("/", "/index.html"):
+            reports.regenerate_index()
+            index_path = reports.REPORTS_DIR / "index.html"
+            if index_path.exists():
+                self._send_text(index_path.read_text(), "text/html; charset=utf-8")
+            else:
+                self._send_404("index not generated")
+            return
+
+        # Static report files
+        if path.startswith("/reports/"):
+            rel = path[len("/reports/"):]
+            target = (reports.REPORTS_DIR / rel).resolve()
+            if (
+                target.is_file()
+                and target.is_relative_to(reports.REPORTS_DIR.resolve())
+            ):
+                ctype = (
+                    "application/json; charset=utf-8"
+                    if target.suffix == ".json"
+                    else "text/html; charset=utf-8"
+                )
+                self._send_text(target.read_text(), ctype)
+            else:
+                self._send_404("file not found")
+            return
+
+        # JSON API
+        if path.startswith("/api/"):
+            parts = [p for p in path[len("/api/"):].split("/") if p]
+            if not parts:
+                self._send_json({"error": "no endpoint"}, 400)
+                return
+            command = parts[0]
+            try:
+                if command == "top":
+                    self._send_json(self.api_top(q))
+                elif command == "run":
+                    self._send_json(self.api_run(q))
+                elif command == "momentum":
+                    self._send_json(self.api_momentum(q))
+                elif command == "wash":
+                    self._send_json(self.api_wash(q))
+                elif command == "inspect" and len(parts) >= 2:
+                    self._send_json(self.api_inspect(parts[1], q))
+                elif command == "broker" and len(parts) >= 2:
+                    try:
+                        self._send_json(self.api_broker(int(parts[1]), q))
+                    except ValueError:
+                        self._send_json({"error": "broker id must be an integer"}, 400)
+                elif command == "signals":
+                    self._send_json(self.api_signals(q))
+                elif command == "dates":
+                    self._send_json({"dates": reports._available_dates()})
+                else:
+                    self._send_json({"error": f"unknown endpoint: {command}"}, 404)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": repr(exc)}, 500)
+            return
+
+        self._send_404("Not found")
+
+
+def serve(host: str = "0.0.0.0", port: int = 8000) -> None:
+    reports.regenerate_index()
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"NEPSE report server on http://{host}:{port}  (Ctrl-C to stop)")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()

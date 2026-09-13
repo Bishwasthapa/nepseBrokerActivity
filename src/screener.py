@@ -730,3 +730,193 @@ def inspect_symbol(symbol: str, sessions: int = 22) -> dict:
     finally:
         conn.close()
 
+
+
+def load_top_turnover(
+    conn, as_of: date | None = None, limit: int = 20
+) -> dict:
+    """Clean per-session top-turnover ranking for a chosen date.
+
+    Returns ``{"date": "YYYY-MM-DD", "rows": [...]}`` where each row is
+    ``{rank, symbol, close, change_pct, qty, turnover}``. If ``as_of`` is given
+    but that exact session is absent (e.g. a non-trading day), it falls back to
+    the most recent trading session on or before the requested date.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(trade_date) FROM daily_market_summary")
+        latest = cur.fetchone()[0]
+        target = as_of if as_of is not None else latest
+        if target is None:
+            return {"date": None, "rows": []}
+        cur.execute(
+            "SELECT DISTINCT trade_date FROM daily_market_summary "
+            "WHERE trade_date <= %s ORDER BY trade_date DESC LIMIT 1",
+            (target,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"date": None, "rows": []}
+        d = row[0]
+        cur.execute(
+            "SELECT symbol, close_price, price_change_pct, total_qty, "
+            "total_turnover, turnover_rank "
+            "FROM daily_market_summary "
+            "WHERE trade_date = %s ORDER BY turnover_rank ASC LIMIT %s",
+            (d, int(limit)),
+        )
+        rows = [
+            {
+                "rank": int(r[5]),
+                "symbol": r[0],
+                "close": float(r[1]) if r[1] is not None else None,
+                "change_pct": float(r[2]) if r[2] is not None else None,
+                "qty": int(r[3]) if r[3] is not None else 0,
+                "turnover": float(r[4]) if r[4] is not None else 0.0,
+            }
+            for r in cur.fetchall()
+        ]
+    return {"date": str(d), "rows": rows}
+
+
+def broker_holdings(conn, broker_id: int, sessions: int = 66) -> list[dict]:
+    """Top holdings for a broker across the four windows (returns list of dicts).
+
+    Mirrors the CLI ``broker`` deep-dive but returns data only, so the CLI and
+    the web API share a single implementation.
+    """
+    dates = fetch_trade_dates(conn)
+    window_dates = dates[-sessions:] if sessions and dates else []
+    if not window_dates:
+        return []
+    rollup = load_rollup(conn, window_dates)
+    summary = load_summary(conn, window_dates)
+    t1_date = window_dates[-1]
+    t1_sum = summary.filter(pl.col("trade_date") == t1_date)
+    if t1_sum.is_empty():
+        return []
+
+    window_aggs = {
+        "T_1": window_dates[-1:],
+        "T_5": window_dates[-5:],
+        "T_22": window_dates[-22:],
+        "T_66": window_dates[-66:],
+    }
+    aggs = {name: aggregate_window(rollup, dts) for name, dts in window_aggs.items()}
+    if aggs["T_1"].is_empty():
+        return []
+
+    close_map = {
+        r["symbol"]: float(r["close_price"])
+        for r in t1_sum.iter_rows(named=True)
+        if r.get("close_price") is not None
+    }
+    symbols = [
+        s
+        for s in aggs["T_1"].filter(pl.col("broker_id") == broker_id)["symbol"].to_list()
+        if not _is_excluded(s)
+    ]
+    if not symbols:
+        return []
+
+    holdings: list[dict] = []
+    for sym in symbols:
+        nets: dict[str, int] = {}
+        vwap = None
+        for name, agg in aggs.items():
+            hit = agg.filter(
+                (pl.col("symbol") == sym) & (pl.col("broker_id") == broker_id)
+            )
+            nets[name] = int(hit["net_qty"][0]) if hit.height else 0
+            if hit.height and name == "T_66":
+                vwap = hit["buy_vwap"][0]
+        close = close_map.get(sym)
+        margin = None
+        if vwap and close:
+            margin = (close - float(vwap)) / float(vwap) * 100.0
+        holdings.append(
+            {
+                "symbol": sym,
+                "net_t1": nets["T_1"],
+                "net_t5": nets["T_5"],
+                "net_t22": nets["T_22"],
+                "net_t66": nets["T_66"],
+                "margin_pct": margin,
+            }
+        )
+    holdings.sort(key=lambda h: h["net_t22"], reverse=True)
+    return holdings
+
+
+def wash_report(
+    conn,
+    window: int = 22,
+    min_qty: int = 5000,
+    include_all: bool = False,
+    as_of: date | None = None,
+) -> dict:
+    """Broker-level + session-level internal-matching scan as plain data.
+
+    Returns ``{"window", "latest_session", "broker": [...], "session": [...]}``
+    where ``broker`` rows are ``{broker_id, buy_qty, sell_qty, matched_qty,
+    gross_volume, match_pct}`` and ``session`` rows are ``{symbol, total_qty,
+    crossed_qty, session_match_pct}``.
+    """
+    dates = fetch_trade_dates(conn)
+    if as_of is not None:
+        dates = [d for d in dates if d <= as_of]
+    if not dates:
+        return {"window": window, "latest_session": None, "broker": [], "session": []}
+    window_dates = dates[-window:]
+    summary = load_summary(conn, window_dates)
+    rollup = load_rollup(conn, window_dates)
+    if not rollup.is_empty():
+        rollup = rollup.with_columns(
+            pl.col("broker_id").cast(pl.Int32),
+            pl.col("buy_qty").cast(pl.Int64),
+            pl.col("sell_qty").cast(pl.Int64),
+            pl.col("self_trade_qty").cast(pl.Int64),
+            pl.col("matched_qty").cast(pl.Int64),
+            pl.col("buy_amount").cast(pl.Float64),
+            pl.col("sell_amount").cast(pl.Float64),
+        )
+    broker_match = compute_broker_match_pct(rollup, window_dates)
+    session_match = compute_session_match_pct(rollup, summary, window_dates)
+
+    unique_symbols: set[str] = set()
+    if not rollup.is_empty():
+        unique_symbols = {
+            s for s in rollup["symbol"].unique().to_list() if not _is_excluded(s)
+        }
+    valid_brokers: set[int] = set()
+    if not rollup.is_empty():
+        valid_brokers = set(
+            rollup.filter(
+                (pl.col("symbol").is_in(unique_symbols))
+                & (pl.col("matched_qty") * 2 >= min_qty)
+            )["broker_id"].unique().to_list()
+        )
+
+    if not broker_match.is_empty():
+        broker_match = broker_match.filter(pl.col("broker_id").is_in(valid_brokers))
+    if not session_match.is_empty():
+        session_match = session_match.filter(
+            pl.col("symbol").is_in(unique_symbols)
+            & (pl.col("crossed_qty") >= min_qty)
+        )
+
+    broker_rows = (
+        broker_match.sort("match_pct", descending=True).to_dicts()
+        if not broker_match.is_empty()
+        else []
+    )
+    session_rows = (
+        session_match.sort("session_match_pct", descending=True).to_dicts()
+        if not session_match.is_empty()
+        else []
+    )
+    return {
+        "window": int(window),
+        "latest_session": str(window_dates[-1]),
+        "broker": broker_rows,
+        "session": session_rows,
+    }

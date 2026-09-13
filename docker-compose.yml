@@ -26,8 +26,10 @@ services:
       - ./src:/app/src
       - ./tests:/app/tests
       - ./data/real:/app/data/real
+      - ./reports:/app/reports
     environment:
       DATABASE_URL: postgresql://quant:quantpass@db:5432/nepse_analytics
+      PYTHONUNBUFFERED: "1"
     command: ["python", "-m", "src.cli", "run"]
 
 volumes:

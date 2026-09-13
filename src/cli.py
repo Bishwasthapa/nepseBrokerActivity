@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from src.db import get_conn
+from src import reports
 from src.screener import (
     compute_broker_match_pct,
     compute_session_match_pct,
@@ -23,6 +24,7 @@ from src.screener import (
     load_summary,
     run_screener,
     screen_turnover_momentum,
+    load_top_turnover,
 )
 
 console = Console()
@@ -1181,7 +1183,97 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_wash.set_defaults(func=cmd_wash)
 
+    p_top = sub.add_parser(
+        "top",
+        help="Top turnover by date (snapshot-cached) for the CLI / web API",
+    )
+    p_top.add_argument(
+        "--as-of", type=str, default=None, help="Date as YYYY-MM-DD (default: latest session)"
+    )
+    p_top.add_argument(
+        "--limit", type=int, default=20, help="Number of top rows (default: 20)"
+    )
+    p_top.set_defaults(func=cmd_top)
+
+    p_serve = sub.add_parser(
+        "serve",
+        help="Serve saved report snapshots + JSON API over HTTP",
+    )
+    p_serve.add_argument("--host", type=str, default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    p_serve.add_argument("--port", type=int, default=8000, help="Listen port (default: 8000)")
+    p_serve.set_defaults(func=cmd_serve)
+
     return parser
+
+
+def render_top(data: dict, reused: bool = False) -> None:
+    panel = Panel(
+        f"Top Turnover by Date\nDate={data['date']}{'  [dim](cached snapshot)[/dim]' if reused else ''}",
+        style="bold blue",
+    )
+    console.print(panel)
+    rows = data.get("rows") or []
+    if not rows:
+        console.print("[yellow]No turnover data for this date[/yellow]")
+        return
+    table = Table(
+        title=f"Top {len(rows)} by total turnover",
+        title_style="bold white",
+        header_style="bold yellow",
+        expand=True,
+    )
+    for col, justify in [
+        ("Rank", "right"),
+        ("Symbol", "left"),
+        ("Close", "right"),
+        ("\u0394%", "right"),
+        ("Qty", "right"),
+        ("Turnover", "right"),
+    ]:
+        table.add_column(col, justify=justify)
+    for r in rows:
+        table.add_row(
+            str(r["rank"]),
+            r["symbol"],
+            _fmt_num(r["close"], 2),
+            _fmt_pct(r["change_pct"]),
+            _fmt_num(r["qty"]),
+            _fmt_num(r["turnover"]),
+        )
+    console.print(table)
+    return
+
+
+def cmd_top(args: argparse.Namespace) -> int:
+    as_of = None
+    if args.as_of:
+        try:
+            as_of = date.fromisoformat(args.as_of)
+        except ValueError:
+            console.print(f"[red]Invalid --as-of date: {args.as_of!r} (expected YYYY-MM-DD)[/red]")
+            return 2
+    params = {"as_of": as_of.isoformat() if as_of else None, "limit": args.limit}
+    conn = get_conn()
+    try:
+        cached = reports.load_snapshot("top", params)
+        if cached is not None:
+            data = cached
+            reused = True
+        else:
+            data = load_top_turnover(conn, as_of=as_of, limit=args.limit)
+            reports.save_snapshot("top", params, data)
+            reused = False
+    finally:
+        conn.close()
+    render_top(data, reused=reused)
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from src.web import serve
+
+    serve(host=args.host, port=args.port)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
