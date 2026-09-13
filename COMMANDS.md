@@ -265,7 +265,7 @@ docker compose run --rm app python -m src.cli serve --port 8000
 
 | Route | Purpose |
 |---|---|
-| `/` | Navigable single-page UI: **Top Turnover · Inspect Symbol · Broker · Momentum · Wash · Full Scan · Signals** (click any symbol/broker to jump between views) |
+| `/` | Navigable single-page UI: **Top Turnover · Inspect Symbol · Broker · Momentum · Wash · Full Scan · Signals · Watchlist** (click any symbol/broker to jump between views) |
 | `/api/top?as_of=YYYY-MM-DD&limit=N` | Clean top-turnover ranking (cached) |
 | `/api/run?as_of&top&top_holder_window` | Full Track A / Track B scan result (cached) |
 | `/api/momentum?short&base&as_of` | Multi-window momentum gainers / losers (cached) |
@@ -273,6 +273,8 @@ docker compose run --rm app python -m src.cli serve --port 8000
 | `/api/inspect/<SYMBOL>?sessions` | Single-symbol deep dive (cached) |
 | `/api/broker/<ID>?sessions&top` | Broker deep-dive holdings (cached) |
 | `/api/signals[?streak=N|symbol=S|signal=X|track=T]` | Signal history / streak detection (cached) |
+| `/api/watchlist` | Read-only personal watchlist with market context + PnL (live, not cached) |
+| `/api/watchlist/<SYMBOL>` | Watch item metadata + full dated journal notes (live, not cached) |
 | `/api/dates` | Distinct trading sessions present in the DB |
 | `/reports/<key>.json` | A stored snapshot, viewable/curl-able directly |
 

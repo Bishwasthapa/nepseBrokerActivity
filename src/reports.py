@@ -194,6 +194,10 @@ a.sym:hover{text-decoration:underline}
 a.broker{color:var(--vio);cursor:pointer;text-decoration:none}
 a.broker:hover{text-decoration:underline}
 .empty{color:var(--mut);padding:1rem .3rem}
+table.meta{max-width:520px}
+table.meta th{width:110px;color:var(--mut);vertical-align:top;white-space:nowrap}
+div.notes{margin-top:.9rem}
+div.notes h4{margin:.4rem 0 .4rem;color:var(--mut);font-weight:600;font-size:.9rem}
 #status{position:fixed;bottom:0;left:0;right:0;background:var(--panel);border-top:1px solid var(--line);padding:.35rem .8rem;color:var(--mut);font-size:.78rem;z-index:40}
 details{margin-top:1.5rem;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:.5rem 1rem;font-size:.82rem}
 summary{cursor:pointer;color:var(--mut);font-weight:600}
@@ -208,71 +212,79 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
     <button data-view="wash">Wash</button>
     <button data-view="run">Full Scan</button>
     <button data-view="signals">Signals</button>
+    <button data-view="watchlist">Watchlist</button>
   </nav>
 </header>
 <main>
 <div id="status"></div>
 
 <section class="view active" id="view-top">
-  <div class="controls"><label>Date<select id="top-date">__DATE_OPTS__</select></label>
-  <label>Limit<input id="top-limit" type="number" value="20" min="1"></label>
+  <div class="controls"><label title="Trading session to report on. Leave empty for the latest.">Session Date<input id="top-date" type="date" list="top-dates"></label>
+  <datalist id="top-dates">__DATE_OPTS__</datalist>
+  <label title="Number of highest-turnover symbols to show.">Top N<input id="top-limit" type="number" value="20" min="1"></label>
   <button onclick="loadTop()">Load</button></div>
-  <div class="block"><h3>Top by total turnover</h3><div id="top-out" class="empty">Select a date and click Load. Click any symbol to inspect it.</div></div>
+  <div class="block"><h3>Top by total turnover</h3><div id="top-out" class="empty">Pick a trading date (clear it for the latest) and click Load. Click any symbol to inspect it.</div></div>
 </section>
 
 <section class="view" id="view-inspect">
-  <div class="controls"><label>Symbol<input id="insp-sym" value=""></label>
-  <label>Sessions<input id="insp-sess" type="number" value="22" min="5"></label>
+  <div class="controls"><label title="NEPSE ticker, e.g. LEC">Ticker<input id="insp-sym" placeholder="e.g. LEC"></label>
+  <label title="How many recent trading sessions to display.">Lookback<input id="insp-sess" type="number" value="22" min="5"></label>
   <button onclick="loadInspect()">Inspect</button></div>
-  <div class="block"><h3 id="recent-h">Recent Sessions</h3><div id="insp-recent" class="empty">Enter a symbol to inspect.</div></div>
-  <div class="block"><h3>Broker Net Flows (by 22D)</h3><div id="insp-brokers"></div></div>
+  <div class="block"><h3 id="recent-h">Daily History</h3><div id="insp-recent" class="empty">Type a ticker and click Inspect.</div></div>
+  <div class="block"><h3>Broker Net Flows</h3><div id="insp-brokers"></div></div>
   <div class="block"><h3>Signal History</h3><div id="insp-signals"></div></div>
 </section>
 
 <section class="view" id="view-broker">
-  <div class="controls"><label>Broker ID<input id="brok-id" type="number" value="1" min="1"></label>
-  <label>Top N<input id="brok-top" type="number" value="5" min="1"></label>
-  <label>Sessions<input id="brok-sess" type="number" value="66" min="5"></label>
+  <div class="controls"><label title="NEPSE broker ID number (e.g. 18 = a specific member broker).">Broker ID<input id="brok-id" type="number" value="1" min="1" placeholder="e.g. 18"></label>
+  <label title="Number of largest holdings to display.">Show Top<input id="brok-top" type="number" value="5" min="1"></label>
+  <label title="How many recent trading sessions to analyse.">Lookback<input id="brok-sess" type="number" value="66" min="5"></label>
   <button onclick="loadBroker()">Load</button></div>
-  <div class="block"><h3 id="brok-h">Top holdings</h3><div id="brok-out" class="empty">Enter a broker ID and click Load. Click a symbol to inspect it.</div></div>
+  <div class="block"><h3 id="brok-h">Top holdings</h3><div id="brok-out" class="empty">Enter a broker ID and click Load.</div></div>
 </section>
 
 <section class="view" id="view-momentum">
-  <div class="controls"><label>Short wnd<input id="mom-short" type="number" value="5" min="1"></label>
-  <label>Base wnd<input id="mom-base" type="number" value="22" min="1"></label>
-  <label>As-of<input id="mom-asof" type="date"></label>
+  <div class="controls"><label title="Number of recent trading sessions to measure (e.g. 5 ≈ 1 week).">Recent Window<input id="mom-short" type="number" value="5" min="1"></label>
+  <label title="Longer reference window to compare against (22 ≈ 1 month).">Baseline Window<input id="mom-base" type="number" value="22" min="1"></label>
+  <label title="Analysis end date. Leave empty for the latest session.">As of Date<input id="mom-asof" type="date"></label>
   <button onclick="loadMomentum()">Run</button></div>
-  <div class="block"><h3>Gainers</h3><div id="mom-gain" class="empty">Run the momentum scan.</div></div>
-  <div class="block"><h3>Losers</h3><div id="mom-los" class="empty"></div></div>
+  <div class="block"><h3>Gainers &mdash; climbing the board</h3><div id="mom-gain" class="empty">Compares recent vs baseline turnover to find structural activity shifts.</div></div>
+  <div class="block"><h3>Losers &mdash; fading activity</h3><div id="mom-los" class="empty"></div></div>
 </section>
 
 <section class="view" id="view-wash">
-  <div class="controls"><label>Window<input id="wash-wnd" type="number" value="22" min="5"></label>
-  <label>Min qty<input id="wash-mq" type="number" value="5000" min="0"></label>
-  <label>As-of<input id="wash-asof" type="date"></label>
+  <div class="controls"><label title="Number of recent sessions to scan for internal broker matching.">Lookback<input id="wash-wnd" type="number" value="22" min="5"></label>
+  <label title="Minimum total quantity for a wash match to count.">Min Volume<input id="wash-mq" type="number" value="5000" min="0"></label>
+  <label title="Analysis end date. Leave empty for the latest session.">As of Date<input id="wash-asof" type="date"></label>
   <button onclick="loadWash()">Run</button></div>
-  <div class="block"><h3>Broker internal matching</h3><div id="wash-broker" class="empty">Run the wash scan.</div></div>
+  <div class="block"><h3>Broker internal matching</h3><div id="wash-broker" class="empty">Finds same-broker buy+sell matches. Click Run.</div></div>
   <div class="block"><h3>Session cross / wash trades</h3><div id="wash-session" class="empty"></div></div>
 </section>
 
 <section class="view" id="view-run">
-  <div class="controls"><label>Top N<input id="run-top" type="number" value="20" min="1"></label>
-  <label>Holder wnd<input id="run-holder" type="number" value="22"></label>
-  <label>As-of<input id="run-asof" type="date"></label>
+  <div class="controls"><label title="Size of the top-turnover universe scanned for Track A.">Turnover Top N<input id="run-top" type="number" value="20" min="1"></label>
+  <label title="Sessions used to identify the dominant net-buyer broker per symbol (22 ≈ 1 month, 66 ≈ quarterly).">Dominant Broker Window<input id="run-holder" type="number" value="22"></label>
+  <label title="Analysis end date. Leave empty for the latest session.">As of Date<input id="run-asof" type="date"></label>
   <button onclick="loadRun()">Run Scan</button></div>
-  <div class="block"><h3>Track A &mdash; broker-flow</h3><div id="run-a" class="empty">Run the full scan.</div></div>
-  <div class="block"><h3>Track B &mdash; stealth accumulation</h3><div id="run-b" class="empty"></div></div>
+  <div class="block"><h3>Track A &mdash; Broker Flow Signals</h3><div id="run-a" class="empty">Runs Track A + Track B with a dominant-broker overlay.</div></div>
+  <div class="block"><h3>Track B &mdash; Stealth Accumulation Setups</h3><div id="run-b" class="empty"></div></div>
 </section>
 
 <section class="view" id="view-signals">
-  <div class="controls"><label>Symbol<input id="sig-sym"></label>
-  <label>Broker<input id="sig-broker" type="number" min="1"></label>
-  <label>Signal<input id="sig-signal"></label>
-  <label>Track<input id="sig-track"></label>
-  <label>Streak<input id="sig-streak" type="number" min="1"></label>
-  <label>Limit<input id="sig-limit" type="number" value="100" min="1"></label>
+  <div class="controls"><label title="Filter by ticker.">Ticker<input id="sig-sym" placeholder="e.g. LEC"></label>
+  <label title="Filter by broker ID.">Broker ID<input id="sig-broker" type="number" min="1" placeholder="any"></label>
+  <label title="Filter by signal name.">Signal Type<input id="sig-signal" placeholder="e.g. SILENT_ACCUMULATION"></label>
+  <label title="A = top-turnover broker-flow; B = stealth setups.">Track (A or B)<input id="sig-track" placeholder="A or B"></label>
+  <label title="Only show signals live for at least N consecutive sessions (weekends don't break a streak).">Min Streak<input id="sig-streak" type="number" min="1" placeholder="any"></label>
+  <label title="Maximum number of results to return.">Max Rows<input id="sig-limit" type="number" value="100" min="1"></label>
   <button onclick="loadSignals()">Query</button></div>
-  <div class="block"><div id="sig-out" class="empty">Set filters and click Query.</div></div>
+  <div class="block"><div id="sig-out" class="empty">Filter persisted signal history and click Query. Min Streak = consecutive live sessions.</div></div>
+</section>
+
+<section class="view" id="view-watchlist">
+  <div class="controls"><button onclick="loadWatchlist()">Refresh</button></div>
+  <div class="block"><h3>Watchlist</h3><div id="wl-list" class="empty">Your saved research items. Click a symbol for its dated journal.</div></div>
+  <div class="block"><h3 id="wl-detail-h">Journal details</h3><div id="wl-detail" class="empty">Click a symbol above to view its thesis, trade plan and dated notes. Manage the list via the CLI (<code>watch add/note/enter/exit/archive</code>).</div></div>
 </section>
 
 <details><summary>Saved snapshots (cached JSON)</summary>
@@ -290,7 +302,7 @@ var pct=function(v){if(v===null||v===undefined)return '\u2014';return (v>=0?'+':
 function showTab(name){var sels=document.querySelectorAll('.view');for(var i=0;i<sels.length;i++)sels[i].classList.remove('active');
 var btns=document.querySelectorAll('nav button');for(var i=0;i<btns.length;i++)btns[i].classList.toggle('active',btns[i].dataset.view===name);
 q('view-'+name).classList.add('active');}
-var nbtns=document.querySelectorAll('nav button');for(var i=0;i<nbtns.length;i++)(function(b){b.addEventListener('click',function(){showTab(b.dataset.view);});})(nbtns[i]);
+var nbtns=document.querySelectorAll('nav button');for(var i=0;i<nbtns.length;i++)(function(b){b.addEventListener('click',function(){showTab(b.dataset.view);if(b.dataset.view==='watchlist')loadWatchlist();});})(nbtns[i]);
 function updateTab(name){showTab(name);window.scrollTo({top:0,behavior:'smooth'});}
 function setStatus(m){q('status').textContent=m;}
 function renderTable(rows,cols){if(!rows||!rows.length)return '<div class="empty">No data.</div>';
@@ -300,6 +312,7 @@ if(c.type==='num'){cls='num';td=fmt(v);}
 else if(c.type==='int'){cls='num';td=fmtInt(v);}
 else if(c.type==='pct'){cls='num '+pctCls(v);td=pct(v);}
 else if(c.type==='sym'){cls='';td='<a class="sym" data-sym="'+v+'">'+v+'</a>';}
+else if(c.type==='wsym'){cls='';td='<a class="sym" data-ws="'+v+'">'+v+'</a>';}
 else if(c.type==='broker'){cls='';td='<a class="broker" data-broker="'+v+'">'+v+'</a>';}
 else{cls='';td=(v===null||v===undefined)?'\u2014':v;}
 h+='<td class="'+cls+'">'+td+'</td>';}
@@ -314,7 +327,7 @@ function loadTop(){var d=val('top-date'),l=val('top-limit')||20;api('top?as_of='
 var RECENT_COLS=[{key:'trade_date',label:'Date'},{key:'close_price',label:'Close',type:'num'},{key:'change_pct',label:'Change %',type:'pct'},{key:'qty',label:'Qty',type:'int'},{key:'turnover',label:'Turnover',type:'num'},{key:'rank',label:'Rank'}];
 var BROKER_COLS=[{key:'broker_id',label:'Broker',type:'broker'},{key:'net_1d',label:'Net 1D',type:'int'},{key:'net_5d',label:'Net 5D',type:'int'},{key:'net_22d',label:'Net 22D',type:'int'},{key:'net_66d',label:'Net 66D',type:'int'},{key:'buy_vwap',label:'Buy VWAP',type:'num'},{key:'margin_pct',label:'Margin %',type:'pct'}];
 var SIG_COLS=[{key:'trade_date',label:'Date'},{key:'symbol',label:'Symbol',type:'sym'},{key:'broker_id',label:'Broker',type:'broker'},{key:'track',label:'Track'},{key:'signal',label:'Signal'},{key:'turnover_rank',label:'Rank'},{key:'net_1d',label:'Net 1D',type:'int'},{key:'net_5d',label:'Net 5D',type:'int'},{key:'net_22d',label:'Net 22D',type:'int'},{key:'net_66d',label:'Net 66D',type:'int'},{key:'margin_pct',label:'Margin %',type:'pct'},{key:'t1_change_pct',label:'Change %',type:'pct'}];
-function loadInspect(){var sym=val('insp-sym').trim().toUpperCase();if(!sym)return;api('inspect/'+sym+'?sessions='+(val('insp-sess')||22)).then(function(data){if(!data)return;q('recent-h').textContent='Recent Sessions \u2014 '+sym;q('insp-recent').innerHTML=renderTable(data.recent,RECENT_COLS);q('insp-brokers').innerHTML=renderTable(data.brokers,BROKER_COLS);q('insp-signals').innerHTML=renderTable(data.signals,SIG_COLS);bindClicks(q('insp-recent'));bindClicks(q('insp-brokers'));bindClicks(q('insp-signals'));});}
+function loadInspect(){var sym=val('insp-sym').trim().toUpperCase();if(!sym)return;api('inspect/'+sym+'?sessions='+(val('insp-sess')||22)).then(function(data){if(!data)return;q('recent-h').textContent='Daily History \u2014 '+sym;q('insp-recent').innerHTML=renderTable(data.recent,RECENT_COLS);q('insp-brokers').innerHTML=renderTable(data.brokers,BROKER_COLS);q('insp-signals').innerHTML=renderTable(data.signals,SIG_COLS);bindClicks(q('insp-recent'));bindClicks(q('insp-brokers'));bindClicks(q('insp-signals'));});}
 var HOLD_COLS=[{key:'symbol',label:'Symbol',type:'sym'},{key:'net_t1',label:'Net T1',type:'int'},{key:'net_t5',label:'Net T5',type:'int'},{key:'net_t22',label:'Net T22',type:'int'},{key:'net_t66',label:'Net T66',type:'int'},{key:'margin_pct',label:'Margin %',type:'pct'}];
 function loadBroker(){var id=val('brok-id');if(!id)return;api('broker/'+id+'?top='+(val('brok-top')||5)+'&sessions='+(val('brok-sess')||66)).then(function(data){if(!data)return;q('brok-h').textContent='Broker '+id+' \u2014 top holdings';q('brok-out').innerHTML=renderTable(data.holdings,HOLD_COLS);bindClicks(q('brok-out'));});}
 var MOM_COLS=[{key:'symbol',label:'Symbol',type:'sym'},{key:'avg_rank_base',label:'Avg Rank (Base)',type:'num'},{key:'avg_rank_short',label:'Avg Rank (Short)',type:'num'},{key:'rank_drift',label:'Rank Drift',type:'num'},{key:'turnover_ratio',label:'Turnover Ratio',type:'num'},{key:'close',label:'Close',type:'num'},{key:'price_change_pct_window',label:'Wnd Change %',type:'pct'},{key:'top_accumulator',label:'Top Accum',type:'broker'},{key:'top_distributor',label:'Top Distrib',type:'broker'}];
@@ -326,6 +339,12 @@ var TRACK_A_COLS=[{key:'symbol',label:'Symbol',type:'sym'},{key:'signal',label:'
 var TRACK_B_COLS=[{key:'symbol',label:'Symbol',type:'sym'},{key:'signal',label:'Signal'},{key:'broker_id',label:'Broker',type:'broker'},{key:'close',label:'Close',type:'num'},{key:'net_t22',label:'Net T22',type:'int'},{key:'absorption_pct',label:'Absorb %',type:'pct'},{key:'t22_price_change_pct',label:'22D Δ%',type:'pct'},{key:'volume_inflection',label:'Vol Inflect',type:'num'},{key:'margin_pct',label:'Margin %',type:'pct'}];
 function loadRun(){api('run?top='+(val('run-top')||20)+'&as_of='+val('run-asof')+'&top_holder_window='+(val('run-holder')||22)).then(function(data){if(!data)return;q('run-a').innerHTML=renderTable(data.track_a,TRACK_A_COLS);q('run-b').innerHTML=renderTable(data.track_b,TRACK_B_COLS);bindClicks(q('run-a'));bindClicks(q('run-b'));});}
 function loadSignals(){var p=[];if(val('sig-sym'))p.push('symbol='+encodeURIComponent(val('sig-sym').trim().toUpperCase()));if(val('sig-broker'))p.push('broker='+val('sig-broker'));if(val('sig-signal'))p.push('signal='+encodeURIComponent(val('sig-signal')));if(val('sig-track'))p.push('track='+encodeURIComponent(val('sig-track')));if(val('sig-streak'))p.push('streak='+val('sig-streak'));p.push('limit='+(val('sig-limit')||100));api('signals?'+p.join('&')).then(function(data){if(!data)return;if(val('sig-streak'))q('sig-out').innerHTML=renderTable(data.streaks,SIG_COLS);else q('sig-out').innerHTML=renderTable(data.rows,SIG_COLS);bindClicks(q('sig-out'));});}
+var WL_COLS=[{key:'symbol',label:'Symbol',type:'wsym'},{key:'status',label:'Status'},{key:'close_price',label:'Price',type:'num'},{key:'price_change_pct',label:'Chg %',type:'pct'},{key:'turnover_rank',label:'Rank'},{key:'entry_price',label:'Entry',type:'num'},{key:'target_price',label:'Target',type:'num'},{key:'stop_price',label:'Stop',type:'num'},{key:'outcome',label:'Outcome'},{key:'added_date',label:'Added'},{key:'updated_date',label:'Updated'}];
+var WL_NOTE_COLS=[{key:'note_date',label:'Date'},{key:'note',label:'Note'}];
+function renderWatchMeta(m){var rows=[['Status',m.status],['Thesis',m.thesis],['Tags',m.tags],['Entry',(m.entry_date||'—')+' @ '+(m.entry_price===null||m.entry_price===undefined?'—':m.entry_price)],['Target',m.target_price],['Stop',m.stop_price],['Quantity',m.quantity],['Exit',(m.exit_date||'—')+' @ '+(m.exit_price===null||m.exit_price===undefined?'—':m.exit_price)],['Outcome',m.outcome],['Added',m.added_date],['Updated',m.updated_date]];var h='<table class="meta"><tbody>';for(var i=0;i<rows.length;i++)h+='<tr><th>'+rows[i][0]+'</th><td>'+(rows[i][1]===null||rows[i][1]===undefined||rows[i][1]===''?'—':rows[i][1])+'</td></tr>';return h+'</tbody></table>';}
+function bindWatchClicks(container){if(!container)return;container.addEventListener('click',function(e){var s=e.target.closest('a[data-ws]');if(s)loadWatchDetail(s.dataset.ws);});}
+function loadWatchlist(){setStatus('Loading watchlist\u2026');api('watchlist').then(function(data){if(!data)return;q('wl-list').innerHTML=renderTable(data,WL_COLS);bindWatchClicks(q('wl-list'));});}
+function loadWatchDetail(sym){q('wl-detail-h').textContent='Journal \u2014 '+sym;api('watchlist/'+sym).then(function(data){if(!data)return;var m=data.metadata;if(!m){q('wl-detail').innerHTML='<div class="empty">Not on the watchlist.</div>';return;}q('wl-detail').innerHTML=renderWatchMeta(m)+'<div class="notes"><h4>Dated journal notes</h4>'+renderTable(data.notes,WL_NOTE_COLS)+'</div>';});}
 </script>
 </body></html>"""
 

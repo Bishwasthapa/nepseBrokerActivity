@@ -32,6 +32,7 @@ from src.screener import (
     load_summary,
     inspect_symbol,
 )
+from src.watchlist import history as watch_history, list_symbols as watch_list
 
 
 def _parse_date(value) -> date | None:
@@ -261,6 +262,29 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
 
+    def api_watchlist(self, q):
+        conn = get_conn()
+        try:
+            data = watch_list(conn, include_archived=_bool(q, "all", False))
+        finally:
+            conn.close()
+        # Live user data is never snapshot-cached (unlike scanner endpoints).
+        return {"cached": False, "params": {"all": _bool(q, "all", False)}, "data": data}
+
+    def api_watchitem(self, symbol: str, q):
+        conn = get_conn()
+        try:
+            metadata, notes = watch_history(
+                conn, symbol.upper(), limit=_int(q, "limit", 100)
+            )
+        finally:
+            conn.close()
+        return {
+            "cached": False,
+            "params": {"symbol": symbol.upper()},
+            "data": {"metadata": metadata, "notes": notes},
+        }
+
     # ---- routing -----------------------------------------------------------
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -320,6 +344,10 @@ class Handler(BaseHTTPRequestHandler):
                         self._send_json({"error": "broker id must be an integer"}, 400)
                 elif command == "signals":
                     self._send_json(self.api_signals(q))
+                elif command == "watchlist" and len(parts) >= 2:
+                    self._send_json(self.api_watchitem(parts[1], q))
+                elif command == "watchlist":
+                    self._send_json(self.api_watchlist(q))
                 elif command == "dates":
                     self._send_json({"dates": reports._available_dates()})
                 else:
