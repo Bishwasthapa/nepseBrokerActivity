@@ -141,6 +141,36 @@ docker compose run --rm app python -m src.cli signals --signal SILENT_ACCUMULATI
 
 `--performance` reports completed +1/+5/+10/+22 trading-session forward returns. Treat small sample sizes as research, not proof of an edge.
 
+### `analyze` — rank ↔ broker ↔ price prediction
+
+```bash
+docker compose run --rm app python -m src.cli analyze ADBL --sessions 30
+```
+
+Combines three dimensions for a single symbol over a recent session window:
+
+1. **Turnover rank** — where the symbol ranked by turnover each session, the
+   Spearman correlation of rank with its T+1 return and with close price, and
+   forward returns bucketed by rank (LEADER / MID / MINOR vs. the session's
+   traded-symbol count). Turnover rank is **per session**, so synthetic seed
+   sessions are handled gracefully.
+2. **Broker accumulation signature** — the session's broker crowd: the top
+   accumulator/distributor, net breadth (# net-buying brokers), concentration,
+   a `sustained` flag (same dominant broker as the prior session), and a
+   signature label:
+   - `MULTI` — ≥3 brokers net-buying (broad accumulation)
+   - `SINGLE` — exactly one net-buying broker (single dominant accumulator)
+   - `DISTRIBUTE` — the top netting broker sold (net outflow)
+   - `NEUTRAL` — no clear signal (no activity, or two positive brokers)
+3. **Forward returns + prediction** — close-to-close T+N returns per signature
+   and a next-trade prediction for each horizon (T+1, T+3) with a bias
+   (BULLISH / BEARISH / NEUTRAL) and a sample-size confidence band
+   (LOW < 3 · MEDIUM < 8 · HIGH ≥ 8).
+
+`--sessions N` sets the prediction window (default: `30`); forward returns
+are measured over the immediately following sessions, so a larger window
+improves the confidence samples. Symbols are case-insensitive.
+
 ---
 
 ## 4. Watchlist, journal, and trade outcomes
@@ -273,8 +303,13 @@ docker compose run --rm app python -m src.cli serve --port 8000
 | `/api/inspect/<SYMBOL>?sessions` | Single-symbol deep dive (cached) |
 | `/api/broker/<ID>?sessions&top` | Broker deep-dive holdings (cached) |
 | `/api/signals[?streak=N|symbol=S|signal=X|track=T]` | Signal history / streak detection (cached) |
-| `/api/watchlist` | Read-only personal watchlist with market context + PnL (live, not cached) |
+| `/api/watchlist` | Personal watchlist with market context + PnL (live, not cached) |
 | `/api/watchlist/<SYMBOL>` | Watch item metadata + full dated journal notes (live, not cached) |
+| `POST /api/watchlist/add` | Add/reactivate a symbol — body `{symbol, thesis?, tags?, note?}` |
+| `POST /api/watchlist/note` | Append a dated journal note — `{symbol, note, note_date?}` |
+| `POST /api/watchlist/enter` | Record an open trade plan — `{symbol, price, target?, stop?, quantity?, entry_date?}` |
+| `POST /api/watchlist/exit` | Close an open trade — `{symbol, price, outcome?(WON/STOPPED/CLOSED)}` |
+| `POST /api/watchlist/archive` | Archive a symbol, keep its journal — `{symbol}` |
 | `/api/dates` | Distinct trading sessions present in the DB |
 | `/reports/<key>.json` | A stored snapshot, viewable/curl-able directly |
 

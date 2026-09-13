@@ -199,6 +199,9 @@ table.meta th{width:110px;color:var(--mut);vertical-align:top;white-space:nowrap
 div.notes{margin-top:.9rem}
 div.notes h4{margin:.4rem 0 .4rem;color:var(--mut);font-weight:600;font-size:.9rem}
 #status{position:fixed;bottom:0;left:0;right:0;background:var(--panel);border-top:1px solid var(--line);padding:.35rem .8rem;color:var(--mut);font-size:.78rem;z-index:40}
+.spin{display:inline-block;width:.68rem;height:.68rem;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:sp .6s linear infinite;vertical-align:-.12rem;margin-right:.4rem}
+@keyframes sp{to{transform:rotate(360deg)}}
+button[disabled]{opacity:.55;cursor:not-allowed}
 details{margin-top:1.5rem;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:.5rem 1rem;font-size:.82rem}
 summary{cursor:pointer;color:var(--mut);font-weight:600}
 .calbtn{background:var(--panel);border:1px solid var(--line);border-radius:6px;cursor:pointer;padding:.42rem .5rem;font-size:.9rem;color:var(--mut);line-height:1}
@@ -213,6 +216,9 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
 .calpop td button{width:100%;background:none;border:none;border-radius:4px;cursor:pointer;padding:.32rem 0;font-size:.78rem;color:var(--text);text-align:center}
 .calpop td button:hover{background:var(--line)}
 .calpop td button.sel{background:var(--acc);color:#0b0f14;font-weight:600}
+td.actions{white-space:nowrap}
+td.actions button{background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--mut);cursor:pointer;font-size:.72rem;padding:.14rem .42rem;margin-right:.25rem}
+td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 </style></head><body>
 <header>
   <div class="brand">NEPSE Screener</div>
@@ -228,7 +234,7 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
   </nav>
 </header>
 <main>
-<div id="status"></div>
+<div id="status"><span id="spin" class="spin hidden"></span><span id="status-msg"></span></div>
 
 <section class="view active" id="view-top">
   <div class="controls"><label title="Trading session to report on. Defaults to the latest; pick any session.">Session Date<input id="top-date" class="dti" type="date" list="top-dates" value="__LATEST_DATE__"></label>
@@ -294,9 +300,16 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
 </section>
 
 <section class="view" id="view-watchlist">
+  <div class="block"><h3>Add symbol</h3><div class="controls">
+    <label title="NEPSE ticker, e.g. LEC">Symbol<input id="wl-symbol" placeholder="e.g. LEC"></label>
+    <label title="Why the ticker is on watch">Thesis<input id="wl-thesis" placeholder="optional"></label>
+    <label title="Comma-separated research tags">Tags<input id="wl-tags" placeholder="optional"></label>
+    <label title="Optional first dated journal note">First note<input id="wl-note" placeholder="optional"></label>
+    <button id="wl-add-btn" onclick="wlAdd()">Add</button>
+  </div></div>
   <div class="controls"><button onclick="loadWatchlist()">Refresh</button></div>
-  <div class="block"><h3>Watchlist</h3><div id="wl-list" class="empty">Your saved research items. Click a symbol for its dated journal.</div></div>
-  <div class="block"><h3 id="wl-detail-h">Journal details</h3><div id="wl-detail" class="empty">Click a symbol above to view its thesis, trade plan and dated notes. Manage the list via the CLI (<code>watch add/note/enter/exit/archive</code>).</div></div>
+  <div class="block"><h3>Watchlist</h3><div id="wl-list" class="empty">Add a symbol above, or manage via CLI (<code>watch add ...</code>). Click a symbol for its dated journal.</div></div>
+  <div class="block"><h3 id="wl-detail-h">Journal details</h3><div id="wl-detail" class="empty">Click a symbol above to view its thesis, trade plan and dated notes.</div></div>
 </section>
 
 <details><summary>Saved snapshots (cached JSON)</summary>
@@ -316,7 +329,9 @@ var btns=document.querySelectorAll('nav button');for(var i=0;i<btns.length;i++)b
 q('view-'+name).classList.add('active');}
 var nbtns=document.querySelectorAll('nav button');for(var i=0;i<nbtns.length;i++)(function(b){b.addEventListener('click',function(){showTab(b.dataset.view);if(b.dataset.view==='watchlist')loadWatchlist();});})(nbtns[i]);
 function updateTab(name){showTab(name);window.scrollTo({top:0,behavior:'smooth'});}
-function setStatus(m){q('status').textContent=m;}
+function setStatus(m){q('status-msg').textContent=m;}
+var _busy=0;
+function busy(on){_busy+=on?1:-1;if(_busy<0)_busy=0;var s=q('spin');if(s)s.className='spin'+(_busy>0?'':' hidden');}
 function renderTable(rows,cols){if(!rows||!rows.length)return '<div class="empty">No data.</div>';
 var h='<table><thead><tr>';for(var i=0;i<cols.length;i++)h+='<th>'+cols[i].label+'</th>';h+='</tr></thead><tbody>';
 for(var r=0;r<rows.length;r++){var row=rows[r];h+='<tr>';for(var i=0;i<cols.length;i++){var c=cols[i],v=row[c.key],cls='',td;
@@ -333,7 +348,7 @@ h+='</tbody></table>';return h;}
 function bindClicks(container){if(!container)return;container.addEventListener('click',function(e){
 var s=e.target.closest('a[data-sym]');if(s){q('insp-sym').value=s.dataset.sym;updateTab('inspect');loadInspect();return;}
 var b=e.target.closest('a[data-broker]');if(b){q('brok-id').value=b.dataset.broker;updateTab('broker');loadBroker();}});}
-function api(path){setStatus('Loading '+path+'\u2026');return fetch('/api/'+path).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){setStatus((j.cached?'cached: ':'computed: ')+path);return j.data;}).catch(function(e){setStatus('Error: '+e.message);return null;});}
+function api(path){setStatus('Loading '+path+'\u2026');busy(true);return fetch('/api/'+path).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){setStatus((j.cached?'cached: ':'computed: ')+path);return j.data;}).catch(function(e){setStatus('Error: '+e.message);return null;}).finally(function(){busy(false);});}
 var TOP_COLS=[{key:'rank',label:'Rank'},{key:'symbol',label:'Symbol',type:'sym'},{key:'close',label:'Close',type:'num'},{key:'change_pct',label:'Change %',type:'pct'},{key:'qty',label:'Qty',type:'int'},{key:'turnover',label:'Turnover',type:'num'}];
 function loadTop(){var d=val('top-date'),l=val('top-limit')||20;api('top?as_of='+encodeURIComponent(d)+'&limit='+l).then(function(data){if(!data)return;q('top-out').innerHTML=renderTable(data.rows,TOP_COLS);bindClicks(q('top-out'));});}
 var RECENT_COLS=[{key:'trade_date',label:'Date'},{key:'close_price',label:'Close',type:'num'},{key:'change_pct',label:'Change %',type:'pct'},{key:'qty',label:'Qty',type:'int'},{key:'turnover',label:'Turnover',type:'num'},{key:'rank',label:'Rank'}];
@@ -355,7 +370,36 @@ var WL_COLS=[{key:'symbol',label:'Symbol',type:'wsym'},{key:'status',label:'Stat
 var WL_NOTE_COLS=[{key:'note_date',label:'Date'},{key:'note',label:'Note'}];
 function renderWatchMeta(m){var rows=[['Status',m.status],['Thesis',m.thesis],['Tags',m.tags],['Entry',(m.entry_date||'—')+' @ '+(m.entry_price===null||m.entry_price===undefined?'—':m.entry_price)],['Target',m.target_price],['Stop',m.stop_price],['Quantity',m.quantity],['Exit',(m.exit_date||'—')+' @ '+(m.exit_price===null||m.exit_price===undefined?'—':m.exit_price)],['Outcome',m.outcome],['Added',m.added_date],['Updated',m.updated_date]];var h='<table class="meta"><tbody>';for(var i=0;i<rows.length;i++)h+='<tr><th>'+rows[i][0]+'</th><td>'+(rows[i][1]===null||rows[i][1]===undefined||rows[i][1]===''?'—':rows[i][1])+'</td></tr>';return h+'</tbody></table>';}
 function bindWatchClicks(container){if(!container)return;container.addEventListener('click',function(e){var s=e.target.closest('a[data-ws]');if(s)loadWatchDetail(s.dataset.ws);});}
-function loadWatchlist(){setStatus('Loading watchlist\u2026');api('watchlist').then(function(data){if(!data)return;q('wl-list').innerHTML=renderTable(data,WL_COLS);bindWatchClicks(q('wl-list'));});}
+function bindWatchActions(container){if(!container)return;container.addEventListener('click',function(e){var b=e.target.closest('button[data-wl]');if(!b)return;var sym=b.dataset.sym,act=b.dataset.wl;if(act==='note')wlNote(sym);else if(act==='enter')wlEnter(sym);else if(act==='close')wlExit(sym);else if(act==='archive')wlArchive(sym);});}
+function renderWatchlist(rows){
+  if(!rows||!rows.length){q('wl-list').innerHTML='<div class="empty">No watchlist items yet. Add one above.</div>';return;}
+  var h='<table><thead><tr>';for(var i=0;i<WL_COLS.length;i++)h+='<th>'+WL_COLS[i].label+'</th>';h+='<th>Actions</th></tr></thead><tbody>';
+  for(var r=0;r<rows.length;r++){var row=rows[r];h+='<tr>';
+    for(var i=0;i<WL_COLS.length;i++){var c=WL_COLS[i],v=row[c.key],cls='';
+      if(c.type==='wsym'){h+='<td><a class="sym" data-ws="'+v+'">'+v+'</a></td>';continue;}
+      if(c.type==='num'){cls='num';v=fmt(v);}
+      else if(c.type==='int'){cls='num';v=fmtInt(v);}
+      else if(c.type==='pct'){cls='num '+pctCls(v);v=pct(v);}
+      else if(v===null||v===undefined){v='\u2014';}
+      h+='<td class="'+cls+'">'+v+'</td>';}
+    var s=row.symbol;
+    var a=(row.outcome==='OPEN')
+      ?'<button data-wl="close" data-sym="'+s+'" title="Close trade">Close</button> '
+      :'<button data-wl="enter" data-sym="'+s+'" title="Record entry plan">Enter</button> ';
+    a+='<button data-wl="note" data-sym="'+s+'" title="Add a dated journal note">Note</button> ';
+    a+='<button data-wl="archive" data-sym="'+s+'" title="Archive, keep journal">Archive</button>';
+    h+='<td class="actions">'+a+'</td></tr>';
+  }
+  h+='</tbody></table>';
+  q('wl-list').innerHTML=h;bindWatchClicks(q('wl-list'));bindWatchActions(q('wl-list'));
+}
+function wlPost(action,payload){setStatus('Saving '+action+'\u2026');busy(true);return fetch('/api/watchlist/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json();}).then(function(j){if(j.error)throw new Error(j.error);setStatus('Saved '+action);return j;}).catch(function(e){setStatus('Error: '+e.message);return null;}).finally(function(){busy(false);});}
+function wlAdd(){var btn=q('wl-add-btn'),sym=val('wl-symbol').trim().toUpperCase();if(!sym){setStatus('Enter a symbol first.');return;}btn.disabled=true;busy(true);wlPost('add',{symbol:sym,thesis:val('wl-thesis'),tags:val('wl-tags'),note:val('wl-note')}).then(function(){btn.disabled=false;q('wl-symbol').value=q('wl-thesis').value=q('wl-tags').value=q('wl-note').value='';loadWatchlist();}).catch(function(){btn.disabled=false;});}
+function wlNote(sym){var t=prompt('Journal note for '+sym+'?');if(t===null||!t.trim())return;wlPost('note',{symbol:sym,note:t.trim()}).then(function(){loadWatchlist();});}
+function wlEnter(sym){var p=prompt('Entry price for '+sym+'?');if(p===null||p==='')return;var t=prompt('Target (optional)?'),s=prompt('Stop (optional)?'),q=prompt('Quantity (optional)?');wlPost('enter',{symbol:sym,price:parseFloat(p),target:t===''?null:parseFloat(t),stop:s===''?null:parseFloat(s),quantity:q===''?null:parseFloat(q)}).then(function(){loadWatchlist();});}
+function wlExit(sym){var p=prompt('Exit price for '+sym+'?');if(p===null||p==='')return;wlPost('exit',{symbol:sym,price:parseFloat(p),outcome:'CLOSED'}).then(function(){loadWatchlist();});}
+function wlArchive(sym){if(!confirm('Archive '+sym+'? Its journal is kept.'))return;wlPost('archive',{symbol:sym}).then(function(){loadWatchlist();});}
+function loadWatchlist(){setStatus('Loading watchlist\u2026');api('watchlist').then(function(data){if(!data)return;renderWatchlist(data);});}
 function loadWatchDetail(sym){q('wl-detail-h').textContent='Journal \u2014 '+sym;api('watchlist/'+sym).then(function(data){if(!data)return;var m=data.metadata;if(!m){q('wl-detail').innerHTML='<div class="empty">Not on the watchlist.</div>';return;}q('wl-detail').innerHTML=renderWatchMeta(m)+'<div class="notes"><h4>Dated journal notes</h4>'+renderTable(data.notes,WL_NOTE_COLS)+'</div>';});}
 function pad2(n){return (n<10?'0':'')+n;}
 function initCalendars(){

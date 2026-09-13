@@ -795,6 +795,162 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def render_analysis(data: dict) -> None:
+    """Render the four analysis tables for the ``analyze`` command."""
+    console.print(Panel(f"Symbol Analysis — {data['symbol']}", style="bold blue"))
+    if data.get("error"):
+        console.print(f"[yellow]{data['error']}[/yellow]")
+        return
+
+    # 1) Timeline
+    tl = Table(
+        title=f"Session Timeline (last {len(data['timeline'])} sessions; "
+              f"rank/turnover + broker signature)",
+        title_style="bold white",
+        header_style="bold yellow",
+    )
+    for col, justify in [
+        ("Date", "left"),
+        ("Rank", "right"),
+        ("R%", "right"),
+        ("Close", "right"),
+        ("Δ%", "right"),
+        ("TopAcc", "right"),
+        ("NetAcc", "right"),
+        ("Breadth", "right"),
+        ("Conc", "right"),
+        ("Sig", "left"),
+        ("Sust", "left"),
+        ("Fwd1%", "right"),
+        ("Fwd3%", "right"),
+    ]:
+        tl.add_column(col, justify=justify)
+    for r in data["timeline"]:
+        tl.add_row(
+            str(r["trade_date"]),
+            str(r["rank"]),
+            _fmt_pct(r["rank_pctile"]),
+            _fmt_num(r["close"], 2),
+            _fmt_pct(r["change_pct"]),
+            str(r["top_accum_id"] if r["top_accum_id"] is not None else "\u2014"),
+            _fmt_num(r["top_accum_net"]),
+            str(r["net_breadth"] if r["net_breadth"] is not None else "\u2014"),
+            (f"{r['concentration']:.2f}" if r["concentration"] is not None else "\u2014"),
+            r["signature"],
+            "yes" if r["sustained"] else "\u2014",
+            _fmt_pct(r.get("fwd_1", None)),
+            _fmt_pct(r.get("fwd_3", None)),
+        )
+    console.print(tl)
+    console.print()
+
+    # 2) Rank <-> price relation
+    rel = data["rank_relation"]
+    reltab = Table(
+        title=f"Rank↔Price Relation (n={rel['n']}; Spearman)",
+        title_style="bold white",
+        header_style="bold magenta",
+        expand=True,
+    )
+    reltab.add_column("Rank Corr", style="bold")
+    reltab.add_column("Value", justify="right")
+    reltab.add_row(
+        "Rank vs T+1 return",
+        _fmt_num(rel.get("spearman_rank_t1_return"), 3),
+    )
+    reltab.add_row("Rank vs close", _fmt_num(rel.get("spearman_rank_close"), 3))
+    console.print(reltab)
+    console.print()
+
+    bucket_tab = Table(
+        title="Forward Return by Turnover Rank Bucket",
+        title_style="bold white",
+        header_style="bold yellow",
+    )
+    bucket_tab.add_column("Bucket", justify="left")
+    bucket_tab.add_column("n", justify="right")
+    for h in data["horizons"]:
+        bucket_tab.add_column(f"T+{h} avg%", justify="right")
+    for b in rel["buckets"]:
+        bucket_tab.add_row(
+            b["bucket"],
+            str(b["n"]),
+            *[ _fmt_pct(b[f"fwd_{h}"]["avg_return_pct"]) for h in data["horizons"]],
+        )
+    console.print(bucket_tab)
+    console.print()
+
+    # 3) Signature performance
+    sig_tab = Table(
+        title="Forward Return by Accumulation Signature",
+        title_style="bold white",
+        header_style="bold yellow",
+    )
+    sig_tab.add_column("Signature", style="bold")
+    sig_tab.add_column("n")
+    for h in data["horizons"]:
+        sig_tab.add_column(f"T+{h} win%", justify="right")
+        sig_tab.add_column(f"T+{h} avg%", justify="right")
+    from src.analysis import SIGNATURES
+    for sig in SIGNATURES:
+        perf = data["signature_perf"][sig]
+        cells = []
+        for h in data["horizons"]:
+            s = perf["horizons"][h]
+            cells += [_fmt_num(s["win_rate_pct"], 2), _fmt_pct(s["avg_return_pct"])]
+        sig_tab.add_row(sig, str(perf["samples"]), *cells)
+    console.print(sig_tab)
+    console.print()
+
+    # 4) Prediction
+    pred = data["prediction"]
+    if not pred:
+        console.print("[dim]No predictable session available yet.[/dim]")
+        return
+    ptab = Table(
+        title=f"Next-Trade Prediction (as of {pred[0]['as_of']})",
+        title_style="bold white",
+        header_style="bold green",
+        expand=True,
+    )
+    for col, justify in [
+        ("Horizon", "right"),
+        ("Signature", "left"),
+        ("Bias", "left"),
+        ("Confidence", "left"),
+        ("n", "right"),
+        ("Hist avg%", "right"),
+        ("Hist win%", "right"),
+        ("Actual%", "right"),
+    ]:
+        ptab.add_column(col, justify=justify)
+    for p in pred:
+        ptab.add_row(
+            f"T+{p['horizon']}",
+            p["signature"],
+            p["bias"],
+            p["confidence"],
+            str(p["n"]),
+            _fmt_pct(p["hist_avg_return_pct"]),
+            _fmt_num(p["hist_win_rate_pct"], 2),
+            _fmt_pct(p["fwd_actual_pct"]),
+        )
+    console.print(ptab)
+
+
+def cmd_analyze(args: argparse.Namespace) -> int:
+    from src.analysis import symbol_analyze
+
+    symbol = args.symbol.upper()
+    conn = get_conn()
+    try:
+        data = symbol_analyze(conn, symbol, sessions=args.sessions)
+    finally:
+        conn.close()
+    render_analysis(data)
+    return 0
+
+
 def render_broker(broker_id: int, holdings: list[dict], sessions: int, top: int) -> None:
     """Render a broker deep-dive table showing top positions across windows."""
     console.print()
@@ -1148,6 +1304,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_inspect.add_argument("symbol", type=str, help="NEPSE ticker, e.g. LEC")
     p_inspect.add_argument("--sessions", type=int, default=22, help="Recent sessions to show")
     p_inspect.set_defaults(func=cmd_inspect)
+
+    p_analyze = sub.add_parser(
+        "analyze",
+        help="Per-symbol rank/broker/price analysis + forward-return prediction",
+    )
+    p_analyze.add_argument("symbol", type=str, help="NEPSE ticker, e.g. LEC")
+    p_analyze.add_argument(
+        "--sessions", type=int, default=30,
+        help="Prediction window sessions (default: 30)",
+    )
+    p_analyze.set_defaults(func=cmd_analyze)
 
     p_broker = sub.add_parser("broker", help="Deep-dive broker activity")
     p_broker.add_argument("broker_id", type=int, help="Broker ID to inspect")

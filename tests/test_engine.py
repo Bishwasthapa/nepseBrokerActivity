@@ -740,3 +740,223 @@ class TestSymbolExclusion:
             assert _is_excluded("GHOST") is True
         finally:
             EXCLUDED_SYMBOLS.remove("GHOST")
+
+
+class TestWatchlistWriteWeb:
+    """POST endpoints for mutating the personal watchlist (web.api_watch_write)."""
+
+    @staticmethod
+    def _dummy_handler():
+        # api_watch_write never touches self, so a plain object suffices.
+        from src import web
+
+        return type("H", (object,), {})()
+
+    def test_add_uppercases_and_passes_fields(self):
+        from unittest import mock
+        from src import web
+
+        captured = {}
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        def fake_get_conn():
+            return FakeConn()
+
+        def fake_add(conn, symbol, **kw):
+            captured["symbol"] = symbol
+            captured.update(kw)
+
+        with mock.patch.object(web, "get_conn", fake_get_conn), mock.patch.object(
+            web, "watch_add", fake_add
+        ):
+            res = web.Handler.api_watch_write(
+                self._dummy_handler(),
+                "add",
+                {"symbol": " lec ", "thesis": "t", "tags": "mom", "note": "n"},
+            )
+        assert captured["symbol"] == "LEC"
+        assert captured["thesis"] == "t"
+        assert captured["note"] == "n"
+        assert res == {"ok": True, "action": "add", "symbol": "LEC"}
+
+    def test_missing_symbol_rejected(self):
+        from unittest import mock
+        from src import web
+
+        with mock.patch.object(web, "get_conn"), mock.patch.object(web, "watch_add"):
+            try:
+                web.Handler.api_watch_write(self._dummy_handler(), "add", {})
+            except ValueError as exc:
+                assert "symbol" in str(exc)
+            else:
+                raise AssertionError("expected ValueError")
+
+    def test_enter_coerces_numbers_and_closes_conn(self):
+        from unittest import mock
+        from src import web
+
+        captured, closed = {}, []
+
+        class FakeConn:
+            def close(self):
+                closed.append(True)
+
+        def fake_enter(conn, symbol, entry_price, target_price=None, stop_price=None,
+                       quantity=None, entry_date=None):
+            captured.update(
+                symbol=symbol, entry=entry_price, target=target_price,
+                stop=stop_price, quantity=quantity, entry_date=entry_date,
+            )
+            return True
+
+        with mock.patch.object(web, "get_conn", lambda: FakeConn()), mock.patch.object(
+            web, "watch_enter", fake_enter
+        ):
+            res = web.Handler.api_watch_write(
+                self._dummy_handler(),
+                "enter",
+                {"symbol": "LEC", "price": "115.5", "target": "130", "quantity": "50"},
+            )
+        assert captured == {
+            "symbol": "LEC", "entry": 115.5, "target": 130.0,
+            "stop": None, "quantity": 50, "entry_date": None,
+        }
+        assert closed == [True]
+        assert res["ok"] is True
+
+    def test_enter_requires_price(self):
+        from unittest import mock
+        from src import web
+
+        with mock.patch.object(web, "get_conn"), mock.patch.object(web, "watch_enter"):
+            try:
+                web.Handler.api_watch_write(self._dummy_handler(), "enter", {"symbol": "LEC"})
+            except ValueError as exc:
+                assert "price" in str(exc)
+            else:
+                raise AssertionError("expected ValueError")
+
+    def test_exit_rejects_bad_outcome(self):
+        from unittest import mock
+        from src import web
+
+        with mock.patch.object(web, "get_conn"), mock.patch.object(web, "watch_exit"):
+            try:
+                web.Handler.api_watch_write(
+                    self._dummy_handler(), "exit", {"symbol": "LEC", "price": 120, "outcome": "BANANA"}
+                )
+            except ValueError as exc:
+                assert "outcome" in str(exc)
+            else:
+                raise AssertionError("expected ValueError")
+
+    def test_unknown_action_rejected(self):
+        from unittest import mock
+        from src import web
+
+        with mock.patch.object(web, "get_conn"):
+            try:
+                web.Handler.api_watch_write(self._dummy_handler(), "rename", {"symbol": "LEC"})
+            except ValueError as exc:
+                assert "unknown action" in str(exc)
+            else:
+                raise AssertionError("expected ValueError")
+class TestAnalysisSignatures:
+    """Pure logic for accumulation-signature classification and broker flows."""
+
+    def test_classify_rule_table(self):
+        from src.analysis import classify_signature
+        assert classify_signature(500, 4) == "MULTI"      # >=3 net-buyers
+        assert classify_signature(500, 1) == "SINGLE"     # single dominant buyer
+        assert classify_signature(-300, 4) == "DISTRIBUTE"  # top broker sold
+        assert classify_signature(200, 2) == "NEUTRAL"    # 2 positive -> no label
+        assert classify_signature(None, None) == "NEUTRAL"  # no activity
+
+    def test_daily_flows_top_and_breadth(self):
+        import polars as pl
+        from src.analysis import daily_flows
+        roll = pl.DataFrame(
+            [
+                {"trade_date": date(2026, 9, 1), "symbol": "LEC", "broker_id": 1,
+                 "buy_qty": 1000, "sell_qty": 0},
+                {"trade_date": date(2026, 9, 1), "symbol": "LEC", "broker_id": 2,
+                 "buy_qty": 500, "sell_qty": 0},
+                {"trade_date": date(2026, 9, 1), "symbol": "LEC", "broker_id": 3,
+                 "buy_qty": 200, "sell_qty": 0},
+                {"trade_date": date(2026, 9, 1), "symbol": "LEC", "broker_id": 4,
+                 "buy_qty": 0, "sell_qty": 900},
+            ]
+        )
+        row = daily_flows(roll).row(0, named=True)
+        assert row["top_accum_id"] == 1
+        assert row["top_accum_net"] == 1000
+        assert row["top_distrib_net"] == -900
+        assert row["net_breadth"] == 3
+        # concentration = |1000| / (1000+500+200+900)
+        assert row["concentration"] == pytest.approx(1000 / 2600, abs=0.001)
+
+
+class TestAnalysisStats:
+    @staticmethod
+    def _rows():
+        # Ves: predictable rows with a signature and forward returns.
+        rows = []
+        for i, sig in enumerate(["MULTI", "MULTI", "SINGLE", "SINGLE", "DISTRIBUTE"]):
+            rows.append({
+                "trade_date": date(2026, 8, i + 1),
+                "rank": (i % 5) + 1,
+                "rank_pctile": (i % 5 + 1) / 20.0,
+                "close": 100.0 + i,
+                "signature": sig,
+                "top_accum_id": 7 + (i % 3),
+                "net_breadth": 1 if sig == "SINGLE" else 3,
+                "sustained": i > 0,
+                "fwd_1": [2.0, -1.0, 1.5, 0.0, -2.0][i],
+                "fwd_3": [3.0, 1.0, 2.0, -1.0, -4.0][i],
+            })
+        return rows
+
+    def test_forward_returns_win_rate(self):
+        from src.analysis import forward_returns
+        perf = forward_returns(self._rows())
+        multi = perf["MULTI"]["horizons"]
+        assert multi[1]["samples"] == 2
+        assert multi[1]["win_rate_pct"] == 50.0   # 2.0 win, -1.0 loss
+        assert multi[1]["avg_return_pct"] == pytest.approx(0.5)
+        assert perf["DISTRIBUTE"]["horizons"][1]["avg_return_pct"] == -2.0
+        assert perf["NEUTRAL"]["samples"] == 0
+
+    def test_rank_price_relation_builds_buckets(self):
+        from src.analysis import rank_price_relation
+        rel = rank_price_relation(self._rows())
+        assert rel["n"] == 5
+        assert len(rel["buckets"]) == 3
+        assert rel["spearman_rank_t1_return"] is not None
+        names = {b["bucket"] for b in rel["buckets"]}
+        assert {"LEADER", "MID", "MINOR"} == names
+
+    def test_predict_next_uses_latest_signature(self):
+        from src.analysis import predict_next
+        preds = predict_next(self._rows())
+        # latest predictable row is DISTRIBUTE (last in list) with fwd_3 filled
+        assert preds[0]["signature"] == "DISTRIBUTE"
+        assert preds[0]["bias"] == "BEARISH"        # hist avg negative
+        assert preds[1]["horizon"] == 3
+        assert preds[0]["confidence"] == "LOW"       # n=1 -> LOW
+
+    def test_confidence_band(self):
+        from src.analysis import confidence
+        assert confidence(1) == "LOW"
+        assert confidence(5) == "MEDIUM"
+        assert confidence(20) == "HIGH"
+
+    def test_cli_analyze_parser_wired(self):
+        from src import cli
+        parser = cli.build_parser()
+        ns = parser.parse_args(["analyze", "LEC", "--sessions", "10"])
+        assert ns.func is cli.cmd_analyze
+        assert ns.symbol == "LEC"
+        assert ns.sessions == 10

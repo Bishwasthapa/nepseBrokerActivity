@@ -32,7 +32,15 @@ from src.screener import (
     load_summary,
     inspect_symbol,
 )
-from src.watchlist import history as watch_history, list_symbols as watch_list
+from src.watchlist import (
+    add_note as watch_note,
+    add_symbol as watch_add,
+    archive_symbol as watch_archive,
+    enter_position as watch_enter,
+    exit_position as watch_exit,
+    history as watch_history,
+    list_symbols as watch_list,
+)
 
 
 def _parse_date(value) -> date | None:
@@ -63,6 +71,16 @@ def _bool(query: dict, key: str, default: bool = False) -> bool:
     return v in ("1", "true", "yes", "on")
 
 
+def _number(value):
+    """Parse a value as float, or None when blank/invalid."""
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class Handler(BaseHTTPRequestHandler):
 
     # ---- helpers -----------------------------------------------------------
@@ -85,6 +103,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_404(self, msg: str = "Not found") -> None:
         self._send_text(msg, "text/plain; charset=utf-8", 404)
+
+    def _read_json(self) -> dict:
+        """Parse the JSON request body into a dict (best-effort)."""
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length <= 0:
+            return {}
+        try:
+            raw = self.rfile.read(length).decode("utf-8")
+        except Exception:  # noqa: BLE001
+            return {}
+        try:
+            obj = json.loads(raw)
+            return obj if isinstance(obj, dict) else {}
+        except ValueError:
+            return {}
 
     def _cached(self, command: str, params: dict, compute) -> dict:
         """Return compute(conn) result, serving the stored snapshot when valid."""
@@ -285,6 +318,73 @@ class Handler(BaseHTTPRequestHandler):
             "data": {"metadata": metadata, "notes": notes},
         }
 
+    def api_watch_write(self, action: str, body: dict) -> dict:
+        """Apply a mutating watchlist action from a POST body."""
+        sym = str(body.get("symbol") or "").strip().upper()
+        if not sym:
+            raise ValueError("symbol is required")
+        conn = get_conn()
+        try:
+            if action == "add":
+                watch_add(
+                    conn,
+                    sym,
+                    thesis=(body.get("thesis") or None),
+                    tags=(body.get("tags") or None),
+                    note=(body.get("note") or None),
+                )
+            elif action == "note":
+                note = str(body.get("note") or "").strip()
+                if not note:
+                    raise ValueError("note is required")
+                if not watch_note(
+                    conn,
+                    sym,
+                    note,
+                    note_date=_parse_date(body.get("note_date")),
+                ):
+                    raise ValueError(f"{sym} is not on the watchlist")
+            elif action == "enter":
+                price = _number(body.get("price"))
+                if price is None:
+                    raise ValueError("price is required")
+                quantity = _number(body.get("quantity"))
+                if quantity is not None:
+                    quantity = int(quantity)
+                if not watch_enter(
+                    conn,
+                    sym,
+                    price,
+                    target_price=_number(body.get("target")),
+                    stop_price=_number(body.get("stop")),
+                    quantity=quantity,
+                    entry_date=_parse_date(body.get("entry_date")),
+                ):
+                    raise ValueError(f"{sym} is not on the watchlist")
+            elif action == "exit":
+                price = _number(body.get("price"))
+                if price is None:
+                    raise ValueError("price is required")
+                outcome = str(body.get("outcome") or "CLOSED").upper()
+                if outcome not in ("WON", "STOPPED", "CLOSED"):
+                    raise ValueError("outcome must be WON, STOPPED or CLOSED")
+                if not watch_exit(
+                    conn,
+                    sym,
+                    price,
+                    outcome=outcome,
+                    exit_date=_parse_date(body.get("exit_date")),
+                ):
+                    raise ValueError(f"{sym} has no open position")
+            elif action == "archive":
+                if not watch_archive(conn, sym):
+                    raise ValueError(f"{sym} is not on the watchlist")
+            else:
+                raise ValueError(f"unknown action: {action}")
+        finally:
+            conn.close()
+        return {"ok": True, "action": action, "symbol": sym}
+
     # ---- routing -----------------------------------------------------------
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -357,6 +457,21 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._send_404("Not found")
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if not path.startswith("/api/watchlist/"):
+            self._send_json({"error": "unsupported POST endpoint"}, 404)
+            return
+        action = path[len("/api/watchlist/"):].split("/")[0] or None
+        body = self._read_json()
+        try:
+            result = self.api_watch_write(action, body)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, 400)
+            return
+        self._send_json(result)
 
 
 def serve(host: str = "0.0.0.0", port: int = 8000) -> None:
