@@ -219,7 +219,7 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
 <div id="status"></div>
 
 <section class="view active" id="view-top">
-  <div class="controls"><label title="Trading session to report on. Leave empty for the latest.">Session Date<input id="top-date" type="date" list="top-dates"></label>
+  <div class="controls"><label title="Trading session to report on. Defaults to the latest; pick any session.">Session Date<input id="top-date" type="date" list="top-dates" value="__LATEST_DATE__"></label>
   <datalist id="top-dates">__DATE_OPTS__</datalist>
   <label title="Number of highest-turnover symbols to show.">Top N<input id="top-limit" type="number" value="20" min="1"></label>
   <button onclick="loadTop()">Load</button></div>
@@ -246,7 +246,7 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
 <section class="view" id="view-momentum">
   <div class="controls"><label title="Number of recent trading sessions to measure (e.g. 5 ≈ 1 week).">Recent Window<input id="mom-short" type="number" value="5" min="1"></label>
   <label title="Longer reference window to compare against (22 ≈ 1 month).">Baseline Window<input id="mom-base" type="number" value="22" min="1"></label>
-  <label title="Analysis end date. Leave empty for the latest session.">As of Date<input id="mom-asof" type="date"></label>
+  <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="mom-asof" type="date" value="__LATEST_DATE__"></label>
   <button onclick="loadMomentum()">Run</button></div>
   <div class="block"><h3>Gainers &mdash; climbing the board</h3><div id="mom-gain" class="empty">Compares recent vs baseline turnover to find structural activity shifts.</div></div>
   <div class="block"><h3>Losers &mdash; fading activity</h3><div id="mom-los" class="empty"></div></div>
@@ -255,7 +255,7 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
 <section class="view" id="view-wash">
   <div class="controls"><label title="Number of recent sessions to scan for internal broker matching.">Lookback<input id="wash-wnd" type="number" value="22" min="5"></label>
   <label title="Minimum total quantity for a wash match to count.">Min Volume<input id="wash-mq" type="number" value="5000" min="0"></label>
-  <label title="Analysis end date. Leave empty for the latest session.">As of Date<input id="wash-asof" type="date"></label>
+  <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="wash-asof" type="date" value="__LATEST_DATE__"></label>
   <button onclick="loadWash()">Run</button></div>
   <div class="block"><h3>Broker internal matching</h3><div id="wash-broker" class="empty">Finds same-broker buy+sell matches. Click Run.</div></div>
   <div class="block"><h3>Session cross / wash trades</h3><div id="wash-session" class="empty"></div></div>
@@ -264,7 +264,7 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
 <section class="view" id="view-run">
   <div class="controls"><label title="Size of the top-turnover universe scanned for Track A.">Turnover Top N<input id="run-top" type="number" value="20" min="1"></label>
   <label title="Sessions used to identify the dominant net-buyer broker per symbol (22 ≈ 1 month, 66 ≈ quarterly).">Dominant Broker Window<input id="run-holder" type="number" value="22"></label>
-  <label title="Analysis end date. Leave empty for the latest session.">As of Date<input id="run-asof" type="date"></label>
+  <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="run-asof" type="date" value="__LATEST_DATE__"></label>
   <button onclick="loadRun()">Run Scan</button></div>
   <div class="block"><h3>Track A &mdash; Broker Flow Signals</h3><div id="run-a" class="empty">Runs Track A + Track B with a dominant-broker overlay.</div></div>
   <div class="block"><h3>Track B &mdash; Stealth Accumulation Setups</h3><div id="run-b" class="empty"></div></div>
@@ -352,6 +352,7 @@ function loadWatchDetail(sym){q('wl-detail-h').textContent='Journal \u2014 '+sym
 def index_html() -> str:
     """Self-contained navigable single-page UI for all report views."""
     dates = _available_dates()
+    latest = dates[0] if dates else ""
     date_opts = (
         "".join(f'<option value="{d}">{d}</option>' for d in dates)
         or '<option value="">no data yet</option>'
@@ -368,6 +369,7 @@ def index_html() -> str:
     ) or '<tr><td colspan="4"><em>No reports computed yet.</em></td></tr>'
     return (
         _UI_HTML.replace("__DATE_OPTS__", date_opts)
+        .replace("__LATEST_DATE__", latest)
         .replace("__SNAPSHOT_ROWS__", rows)
     )
 
