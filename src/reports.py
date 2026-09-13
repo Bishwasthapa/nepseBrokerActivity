@@ -201,6 +201,18 @@ div.notes h4{margin:.4rem 0 .4rem;color:var(--mut);font-weight:600;font-size:.9r
 #status{position:fixed;bottom:0;left:0;right:0;background:var(--panel);border-top:1px solid var(--line);padding:.35rem .8rem;color:var(--mut);font-size:.78rem;z-index:40}
 details{margin-top:1.5rem;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:.5rem 1rem;font-size:.82rem}
 summary{cursor:pointer;color:var(--mut);font-weight:600}
+.calbtn{background:var(--panel);border:1px solid var(--line);border-radius:6px;cursor:pointer;padding:.42rem .5rem;font-size:.9rem;color:var(--mut);line-height:1}
+.calbtn:hover{color:var(--acc);border-color:var(--acc)}
+.calpop{position:fixed;z-index:80;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);padding:.5rem;width:250px}
+.calpop .calhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;font-weight:600}
+.calpop .calhead button{background:none;border:none;cursor:pointer;font-size:1.15rem;color:var(--acc);padding:0 .3rem}
+.calpop table{width:100%;border:none;background:none}
+.calpop th,.calpop td{border:none}
+.calpop th{color:var(--mut);font-size:.66rem;padding:.12rem 0;text-align:center}
+.calpop td{padding:1px}
+.calpop td button{width:100%;background:none;border:none;border-radius:4px;cursor:pointer;padding:.32rem 0;font-size:.78rem;color:var(--text);text-align:center}
+.calpop td button:hover{background:var(--line)}
+.calpop td button.sel{background:var(--acc);color:#0b0f14;font-weight:600}
 </style></head><body>
 <header>
   <div class="brand">NEPSE Screener</div>
@@ -219,7 +231,7 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
 <div id="status"></div>
 
 <section class="view active" id="view-top">
-  <div class="controls"><label title="Trading session to report on. Defaults to the latest; pick any session.">Session Date<input id="top-date" type="date" list="top-dates" value="__LATEST_DATE__"></label>
+  <div class="controls"><label title="Trading session to report on. Defaults to the latest; pick any session.">Session Date<input id="top-date" class="dti" type="date" list="top-dates" value="__LATEST_DATE__"></label>
   <datalist id="top-dates">__DATE_OPTS__</datalist>
   <label title="Number of highest-turnover symbols to show.">Top N<input id="top-limit" type="number" value="20" min="1"></label>
   <button onclick="loadTop()">Load</button></div>
@@ -246,7 +258,7 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
 <section class="view" id="view-momentum">
   <div class="controls"><label title="Number of recent trading sessions to measure (e.g. 5 ≈ 1 week).">Recent Window<input id="mom-short" type="number" value="5" min="1"></label>
   <label title="Longer reference window to compare against (22 ≈ 1 month).">Baseline Window<input id="mom-base" type="number" value="22" min="1"></label>
-  <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="mom-asof" type="date" value="__LATEST_DATE__"></label>
+  <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="mom-asof" class="dti" type="date" value="__LATEST_DATE__"></label>
   <button onclick="loadMomentum()">Run</button></div>
   <div class="block"><h3>Gainers &mdash; climbing the board</h3><div id="mom-gain" class="empty">Compares recent vs baseline turnover to find structural activity shifts.</div></div>
   <div class="block"><h3>Losers &mdash; fading activity</h3><div id="mom-los" class="empty"></div></div>
@@ -255,7 +267,7 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
 <section class="view" id="view-wash">
   <div class="controls"><label title="Number of recent sessions to scan for internal broker matching.">Lookback<input id="wash-wnd" type="number" value="22" min="5"></label>
   <label title="Minimum total quantity for a wash match to count.">Min Volume<input id="wash-mq" type="number" value="5000" min="0"></label>
-  <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="wash-asof" type="date" value="__LATEST_DATE__"></label>
+  <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="wash-asof" class="dti" type="date" value="__LATEST_DATE__"></label>
   <button onclick="loadWash()">Run</button></div>
   <div class="block"><h3>Broker internal matching</h3><div id="wash-broker" class="empty">Finds same-broker buy+sell matches. Click Run.</div></div>
   <div class="block"><h3>Session cross / wash trades</h3><div id="wash-session" class="empty"></div></div>
@@ -264,7 +276,7 @@ summary{cursor:pointer;color:var(--mut);font-weight:600}
 <section class="view" id="view-run">
   <div class="controls"><label title="Size of the top-turnover universe scanned for Track A.">Turnover Top N<input id="run-top" type="number" value="20" min="1"></label>
   <label title="Sessions used to identify the dominant net-buyer broker per symbol (22 ≈ 1 month, 66 ≈ quarterly).">Dominant Broker Window<input id="run-holder" type="number" value="22"></label>
-  <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="run-asof" type="date" value="__LATEST_DATE__"></label>
+  <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="run-asof" class="dti" type="date" value="__LATEST_DATE__"></label>
   <button onclick="loadRun()">Run Scan</button></div>
   <div class="block"><h3>Track A &mdash; Broker Flow Signals</h3><div id="run-a" class="empty">Runs Track A + Track B with a dominant-broker overlay.</div></div>
   <div class="block"><h3>Track B &mdash; Stealth Accumulation Setups</h3><div id="run-b" class="empty"></div></div>
@@ -345,6 +357,45 @@ function renderWatchMeta(m){var rows=[['Status',m.status],['Thesis',m.thesis],['
 function bindWatchClicks(container){if(!container)return;container.addEventListener('click',function(e){var s=e.target.closest('a[data-ws]');if(s)loadWatchDetail(s.dataset.ws);});}
 function loadWatchlist(){setStatus('Loading watchlist\u2026');api('watchlist').then(function(data){if(!data)return;q('wl-list').innerHTML=renderTable(data,WL_COLS);bindWatchClicks(q('wl-list'));});}
 function loadWatchDetail(sym){q('wl-detail-h').textContent='Journal \u2014 '+sym;api('watchlist/'+sym).then(function(data){if(!data)return;var m=data.metadata;if(!m){q('wl-detail').innerHTML='<div class="empty">Not on the watchlist.</div>';return;}q('wl-detail').innerHTML=renderWatchMeta(m)+'<div class="notes"><h4>Dated journal notes</h4>'+renderTable(data.notes,WL_NOTE_COLS)+'</div>';});}
+function pad2(n){return (n<10?'0':'')+n;}
+function initCalendars(){
+  var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var ins=document.querySelectorAll('input.dti'),k;
+  for(k=0;k<ins.length;k++)(function(inp){
+    var btn=document.createElement('button');
+    btn.type='button';btn.className='calbtn';btn.title='Open calendar';btn.textContent='\U0001F4C5';
+    var pop=document.createElement('div');
+    pop.className='calpop';pop.style.display='none';
+    var host=inp.parentNode;
+    host.parentNode.insertBefore(btn,host.nextSibling);
+    document.body.appendChild(pop);
+    function base(){var v=inp.value;return v?new Date(v+'T12:00:00'):new Date();}
+    function render(y,m){
+      var first=new Date(y,m,1),days=new Date(y,m+1,0).getDate();
+      var lead=(first.getDay()+6)%7,h='<div class="calhead"><button type="button" data-nav="-1">\u2039</button><span>'+MONTHS[m]+' '+y+'</span><button type="button" data-nav="1">\u203A</button></div>';
+      h+='<table class="calgrid"><tr><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th><th>Su</th></tr><tr>';
+      for(var i=0;i<lead;i++)h+='<td></td>';
+      for(var d=1;d<=days;d++){
+        if((lead+d-1)%7===0)h+='</tr><tr>';
+        var iso=y+'-'+pad2(m+1)+'-'+pad2(d);
+        h+='<td><button type="button" data-d="'+iso+'"'+(inp.value===iso?' class="sel"':'')+'>'+d+'</button></td>';
+      }
+      h+='</tr></table>';
+      pop.innerHTML=h;
+      pop.querySelectorAll('.calhead button')[0].onclick=function(){render(y,m-1);};
+      pop.querySelectorAll('.calhead button')[1].onclick=function(){render(y,m+1);};
+      var ds=pop.querySelectorAll('.calgrid td button');
+      for(var j=0;j<ds.length;j++)ds[j].onclick=function(){inp.value=this.dataset.d;pop.style.display='none';};
+    }
+    btn.addEventListener('click',function(e){e.preventDefault();
+      if(pop.style.display==='block'){pop.style.display='none';return;}
+      var b=btn.getBoundingClientRect();pop.style.left=b.left+'px';pop.style.top=(b.bottom+6)+'px';pop.style.display='block';
+      var c=base();render(c.getFullYear(),c.getMonth());
+    });
+    document.addEventListener('click',function(e){if(pop.style.display==='block'&&!pop.contains(e.target)&&e.target!==btn)pop.style.display='none';});
+  })(ins[k]);
+}
+initCalendars();
 </script>
 </body></html>"""
 
