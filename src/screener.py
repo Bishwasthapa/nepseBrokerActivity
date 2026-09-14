@@ -235,30 +235,18 @@ def _dominant_brokers(rollup: pl.DataFrame, dates: list[date]) -> dict[str, tupl
     return out
 
 
-def screen_turnover_momentum(
+def _compute_all_turnover_momentum(
     summary_df: pl.DataFrame,
     short_window: int = 5,
     base_window: int = 22,
     rollup: pl.DataFrame | None = None,
-) -> tuple[list[dict], list[dict]]:
-    """Compare short-window vs baseline turnover to flag structural liquidity change.
-
-    For every symbol present in both windows compute:
-      - avg_turnover_short / avg_turnover_base (per-session means)
-      - avg_rank_short / avg_rank_base (mean turnover_rank)
-      - rank_drift = avg_rank_base - avg_rank_short (positive = climbing the board)
-      - turnover_ratio = avg_turnover_short / avg_turnover_base
-      - window Δ% (close_first -> close_last across the short window)
-
-    Returns (gainers, losers). Symbols missing data for the shorter window are
-    simply excluded (no crash) — the edge case of a symbol newer than the
-    baseline window.
-    """
+) -> tuple[pl.DataFrame, dict[str, tuple[int | None, int | None]]]:
+    """Compute multi-window turnover and rank drift statistics across all symbols."""
     if summary_df.is_empty():
-        return [], []
+        return pl.DataFrame(), {}
     dates = sorted(summary_df["trade_date"].unique().to_list())
     if not dates:
-        return [], []
+        return pl.DataFrame(), {}
 
     short_dates = dates[-short_window:]
     base_dates = dates[-base_window:]
@@ -292,9 +280,229 @@ def screen_turnover_momentum(
         ),
     ).with_columns(close=pl.col("close_last"))
 
-    dominators = _dominant_brokers(rollup, short_dates)
+    dominators = _dominant_brokers(rollup, short_dates) if rollup is not None else {}
+    return joined, dominators
 
-    def _to_rows(frame: pl.DataFrame, drift_asc: bool) -> list[dict]:
+
+def classify_momentum_status(
+    avg_rank_short: float,
+    avg_rank_base: float,
+    rank_drift: float,
+    turnover_ratio: float | None,
+) -> str:
+    """Classify a symbol's liquidity/momentum state into a standardized badge."""
+    if turnover_ratio is None:
+        return "INSUFFICIENT_DATA"
+    if avg_rank_short <= 50 and rank_drift >= 15 and turnover_ratio >= 1.75:
+        return "MOMENTUM_GAINER"
+    if avg_rank_base <= 40 and rank_drift <= -15 and turnover_ratio <= 0.50:
+        return "MOMENTUM_LOSER"
+    if turnover_ratio >= 1.25 and rank_drift >= 5:
+        return "STEALTH_BUILDING"
+    if turnover_ratio <= 0.75 and rank_drift <= -5:
+        return "LIQUIDITY_FADING"
+    if avg_rank_short <= 30 and abs(rank_drift) < 10:
+        return "HIGH_VOLUME_STABLE"
+    return "NEUTRAL"
+
+
+def symbol_turnover_momentum(
+    summary_df: pl.DataFrame,
+    symbol: str,
+    short_window: int = 5,
+    base_window: int = 22,
+    rollup: pl.DataFrame | None = None,
+) -> dict | None:
+    """Compute comprehensive momentum diagnostic for a single stock."""
+    if summary_df.is_empty():
+        return None
+    joined, dominators = _compute_all_turnover_momentum(
+        summary_df, short_window, base_window, rollup
+    )
+    if joined.is_empty():
+        return None
+    target = joined.filter(pl.col("symbol") == symbol.upper().strip())
+    if target.is_empty():
+        return None
+    r = target.row(0, named=True)
+    acc, dist = dominators.get(r["symbol"], (None, None))
+
+    total_symbols = len(joined)
+    ratio_val = r["turnover_ratio"]
+    drift_val = r["rank_drift"]
+
+    ratio_pctile = None
+    drift_pctile = None
+    if ratio_val is not None:
+        less_equal_ratio = joined.filter(pl.col("turnover_ratio") <= ratio_val).height
+        ratio_pctile = round((less_equal_ratio / total_symbols) * 100.0, 1)
+    if drift_val is not None:
+        less_equal_drift = joined.filter(pl.col("rank_drift") <= drift_val).height
+        drift_pctile = round((less_equal_drift / total_symbols) * 100.0, 1)
+
+    status = classify_momentum_status(
+        r["avg_rank_short"],
+        r["avg_rank_base"],
+        r["rank_drift"],
+        r["turnover_ratio"],
+    )
+
+    return {
+        "symbol": r["symbol"],
+        "status": status,
+        "avg_turnover_short": (
+            round(r["avg_turnover_short"], 2)
+            if r["avg_turnover_short"] is not None
+            else None
+        ),
+        "avg_turnover_base": (
+            round(r["avg_turnover_base"], 2)
+            if r["avg_turnover_base"] is not None
+            else None
+        ),
+        "avg_rank_base": round(r["avg_rank_base"], 2),
+        "avg_rank_short": round(r["avg_rank_short"], 2),
+        "rank_drift": round(r["rank_drift"], 2),
+        "turnover_ratio": (
+            round(r["turnover_ratio"], 2)
+            if r["turnover_ratio"] is not None
+            else None
+        ),
+        "close": r["close"],
+        "price_change_pct_window": (
+            round(r["price_change_pct_window"], 2)
+            if r["price_change_pct_window"] is not None
+            else None
+        ),
+        "top_accumulator": acc,
+        "top_distributor": dist,
+        "percentile_turnover_ratio": ratio_pctile,
+        "percentile_rank_drift": drift_pctile,
+        "total_market_symbols": total_symbols,
+    }
+
+
+def find_similar_momentum(
+    summary_df: pl.DataFrame,
+    symbol: str,
+    short_window: int = 5,
+    base_window: int = 22,
+    rollup: pl.DataFrame | None = None,
+    top_n: int = 5,
+) -> list[dict]:
+    """Find stocks with a similar momentum profile using weighted Euclidean distance."""
+    if summary_df.is_empty():
+        return []
+    joined, dominators = _compute_all_turnover_momentum(
+        summary_df, short_window, base_window, rollup
+    )
+    if joined.height <= 1:
+        return []
+    sym_clean = symbol.upper().strip()
+    target = joined.filter(pl.col("symbol") == sym_clean)
+    if target.is_empty():
+        return []
+
+    t = target.row(0, named=True)
+    if t["turnover_ratio"] is None:
+        return []
+
+    valid = joined.filter(pl.col("turnover_ratio").is_not_null())
+    if valid.height <= 1:
+        return []
+
+    def _std(col_name: str) -> float:
+        val = valid[col_name].std()
+        return float(val) if val and val > 1e-6 else 1.0
+
+    std_ratio = _std("turnover_ratio")
+    std_drift = _std("rank_drift")
+    std_price = _std("price_change_pct_window")
+    std_rank = _std("avg_rank_short")
+
+    t_ratio = float(t["turnover_ratio"])
+    t_drift = float(t["rank_drift"])
+    t_price = float(t["price_change_pct_window"] or 0.0)
+    t_rank = float(t["avg_rank_short"])
+
+    w_ratio, w_drift, w_price, w_rank = 0.35, 0.35, 0.15, 0.15
+
+    candidates = []
+    for r in valid.iter_rows(named=True):
+        if r["symbol"] == sym_clean:
+            continue
+        d_ratio = (float(r["turnover_ratio"]) - t_ratio) / std_ratio
+        d_drift = (float(r["rank_drift"]) - t_drift) / std_drift
+        d_price = (float(r["price_change_pct_window"] or 0.0) - t_price) / std_price
+        d_rank = (float(r["avg_rank_short"]) - t_rank) / std_rank
+
+        dist = (
+            w_ratio * (d_ratio**2)
+            + w_drift * (d_drift**2)
+            + w_price * (d_price**2)
+            + w_rank * (d_rank**2)
+        ) ** 0.5
+
+        similarity_pct = round(100.0 / (1.0 + dist), 1)
+        acc, dist_broker = dominators.get(r["symbol"], (None, None))
+        status = classify_momentum_status(
+            r["avg_rank_short"],
+            r["avg_rank_base"],
+            r["rank_drift"],
+            r["turnover_ratio"],
+        )
+
+        candidates.append(
+            {
+                "symbol": r["symbol"],
+                "similarity_pct": similarity_pct,
+                "status": status,
+                "avg_rank_base": round(r["avg_rank_base"], 2),
+                "avg_rank_short": round(r["avg_rank_short"], 2),
+                "rank_drift": round(r["rank_drift"], 2),
+                "turnover_ratio": round(r["turnover_ratio"], 2),
+                "close": r["close"],
+                "price_change_pct_window": (
+                    round(r["price_change_pct_window"], 2)
+                    if r["price_change_pct_window"] is not None
+                    else None
+                ),
+                "top_accumulator": acc,
+                "top_distributor": dist_broker,
+                "_dist": dist,
+            }
+        )
+
+    candidates.sort(key=lambda x: x["_dist"])
+    for c in candidates:
+        del c["_dist"]
+    return candidates[:top_n]
+
+
+def screen_turnover_momentum(
+    summary_df: pl.DataFrame,
+    short_window: int = 5,
+    base_window: int = 22,
+    rollup: pl.DataFrame | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Compare short-window vs baseline turnover to flag structural liquidity change.
+
+    For every symbol present in both windows compute:
+      - avg_turnover_short / avg_turnover_base (per-session means)
+      - avg_rank_short / avg_rank_base (mean turnover_rank)
+      - rank_drift = avg_rank_base - avg_rank_short (positive = climbing the board)
+      - turnover_ratio = avg_turnover_short / avg_turnover_base
+      - window Δ% (close_first -> close_last across the short window)
+
+    Returns (gainers, losers).
+    """
+    joined, dominators = _compute_all_turnover_momentum(
+        summary_df, short_window, base_window, rollup
+    )
+    if joined.is_empty():
+        return [], []
+
+    def _to_rows(frame: pl.DataFrame, drift_asc: bool = True) -> list[dict]:
         rows = []
         for r in frame.iter_rows(named=True):
             acc, dist = dominators.get(r["symbol"], (None, None))
@@ -719,6 +927,21 @@ def inspect_symbol(symbol: str, sessions: int = 22) -> dict:
         from src.signals import load_signal_history
 
         sig_rows = load_signal_history(conn, symbol=symbol, limit=100)
+        mom = symbol_turnover_momentum(
+            summary.with_columns(
+                pl.col("close_price").cast(pl.Float64),
+                pl.col("total_turnover").cast(pl.Float64),
+                pl.col("turnover_rank").cast(pl.Int32),
+            ),
+            symbol=symbol,
+            short_window=5,
+            base_window=22,
+            rollup=rollup.with_columns(
+                pl.col("broker_id").cast(pl.Int32),
+                pl.col("buy_amount").cast(pl.Float64),
+                pl.col("sell_amount").cast(pl.Float64),
+            ),
+        )
         return {
             "symbol": symbol,
             "recent": recent,
@@ -726,6 +949,7 @@ def inspect_symbol(symbol: str, sessions: int = 22) -> dict:
             "signals": sig_rows,
             "top_holder_22d": top_holder_22d,
             "top_holder_1d": top_holder_1d,
+            "momentum": mom,
         }
     finally:
         conn.close()

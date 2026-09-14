@@ -24,6 +24,8 @@ from src.screener import (
     load_summary,
     run_screener,
     screen_turnover_momentum,
+    symbol_turnover_momentum,
+    find_similar_momentum,
     load_top_turnover,
 )
 
@@ -35,6 +37,16 @@ SIGNAL_STYLE = {
     "DISTRIBUTION_TRAP": "bold red",
     "STEALTH_ACCUMULATION": "bold magenta",
     "WATCH": "dim",
+}
+
+MOMENTUM_STYLE = {
+    "MOMENTUM_GAINER": "bold green",
+    "STEALTH_BUILDING": "bold cyan",
+    "HIGH_VOLUME_STABLE": "bold blue",
+    "NEUTRAL": "dim",
+    "LIQUIDITY_FADING": "bold yellow",
+    "MOMENTUM_LOSER": "bold red",
+    "INSUFFICIENT_DATA": "dim",
 }
 
 
@@ -190,6 +202,69 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def render_symbol_momentum(data: dict, short: int, base: int) -> Panel:
+    status = data["status"]
+    badge_style = MOMENTUM_STYLE.get(status, "white")
+    ratio_str = f"{data['turnover_ratio']}x" if data["turnover_ratio"] is not None else "-"
+    if data["percentile_turnover_ratio"] is not None:
+        ratio_str += f" [dim](Top {100.0 - data['percentile_turnover_ratio']:.1f}% on NEPSE)[/dim]"
+    drift_str = f"{data['rank_drift']:+.1f}"
+    if data["percentile_rank_drift"] is not None:
+        drift_str += f" [dim](Top {100.0 - data['percentile_rank_drift']:.1f}% drift)[/dim]"
+
+    t_short = f"NRS {data['avg_turnover_short']:,.0f}" if data["avg_turnover_short"] else "-"
+    t_base = f"NRS {data['avg_turnover_base']:,.0f}" if data["avg_turnover_base"] else "-"
+
+    lines = [
+        f"[bold]Status:[/bold] [{badge_style}]{status}[/{badge_style}]",
+        f"[bold]Turnover Ratio ({short}D vs {base}D):[/bold] {ratio_str}",
+        f"[bold]Daily Turnover (Mean):[/bold] Recent {short}D: {t_short} | Baseline {base}D: {t_base}",
+        f"[bold]Turnover Rank Progression:[/bold] Base #{data['avg_rank_base']} → Recent #{data['avg_rank_short']} (Drift: {drift_str})",
+        f"[bold]Recent Window Δ% / Close:[/bold] {_fmt_pct(data['price_change_pct_window'])} | NRS {_fmt_num(data['close'], 2)}",
+        f"[bold]Top Accumulator (Buyer):[/bold] {data['top_accumulator'] or '-'}  |  [bold]Top Distributor (Seller):[/bold] {data['top_distributor'] or '-'}",
+    ]
+    return Panel(
+        "\n".join(lines),
+        title=f"[bold white]Momentum Diagnostic — {data['symbol']}[/bold white]",
+        border_style="bold blue",
+    )
+
+
+def render_similar_momentum(rows: list[dict], target_symbol: str) -> Table:
+    table = Table(
+        title=f"Stocks with Similar Momentum Profile to {target_symbol.upper()}",
+        title_style="bold white",
+        header_style="bold cyan",
+        expand=True,
+    )
+    for col, justify in [
+        ("Symbol", "left"),
+        ("Match %", "right"),
+        ("Status", "left"),
+        ("Turnover Ratio", "right"),
+        ("Rank Drift", "right"),
+        ("Avg Rank (Short)", "right"),
+        ("Wnd Δ%", "right"),
+        ("Top Accum", "right"),
+        ("Top Distrib", "right"),
+    ]:
+        table.add_column(col, justify=justify)
+    for r in rows:
+        st_style = MOMENTUM_STYLE.get(r["status"], "white")
+        table.add_row(
+            r["symbol"],
+            f"[bold]{r['similarity_pct']:.1f}%[/bold]",
+            f"[{st_style}]{r['status']}[/{st_style}]",
+            _fmt_num(r["turnover_ratio"], 2),
+            f"{r['rank_drift']:+.1f}",
+            _fmt_num(r["avg_rank_short"], 1),
+            _fmt_pct(r["price_change_pct_window"]),
+            str(r["top_accumulator"]) if r["top_accumulator"] is not None else "-",
+            str(r["top_distributor"]) if r["top_distributor"] is not None else "-",
+        )
+    return table
+
+
 def render_momentum(rows: list[dict], title: str) -> Table:
     table = Table(title=title, title_style="bold white", header_style="bold yellow", expand=True)
     for col, justify in [
@@ -233,6 +308,7 @@ def cmd_momentum(args: argparse.Namespace) -> int:
         except ValueError:
             console.print(f"[red]Invalid --as-of date: {args.as_of!r} (expected YYYY-MM-DD)[/red]")
             return 2
+    target_sym = args.symbol.upper().strip() if getattr(args, "symbol", None) else None
     conn = get_conn()
     try:
         dates = fetch_trade_dates(conn)
@@ -262,8 +338,37 @@ def cmd_momentum(args: argparse.Namespace) -> int:
             base_window=args.base,
             rollup=rollup,
         )
+        sym_mom = None
+        similar = []
+        if target_sym:
+            sym_mom = symbol_turnover_momentum(
+                summary,
+                symbol=target_sym,
+                short_window=args.short,
+                base_window=args.base,
+                rollup=rollup,
+            )
+            similar = find_similar_momentum(
+                summary,
+                symbol=target_sym,
+                short_window=args.short,
+                base_window=args.base,
+                rollup=rollup,
+                top_n=5,
+            )
     finally:
         conn.close()
+
+    if target_sym:
+        if sym_mom:
+            console.print(render_symbol_momentum(sym_mom, args.short, args.base))
+            console.print()
+            if similar:
+                console.print(render_similar_momentum(similar, target_sym))
+                console.print()
+        else:
+            console.print(f"[yellow]No momentum data found for {target_sym}[/yellow]\n")
+
     console.print(render_momentum(
         gainers,
         f"Turnover Momentum Gainers (Last {args.short} Sessions vs {args.base}-Session Baseline)",
@@ -687,6 +792,23 @@ def render_inspect(data: dict) -> None:
     if not data["recent"]:
         console.print("[yellow]No market data for this symbol[/yellow]")
         return
+
+    mom = data.get("momentum")
+    if mom:
+        m_style = MOMENTUM_STYLE.get(mom.get("status"), "white")
+        ratio_txt = f"{mom['turnover_ratio']}x" if mom.get("turnover_ratio") is not None else "-"
+        drift_txt = f"{mom['rank_drift']:+.1f}" if mom.get("rank_drift") is not None else "-"
+        console.print(
+            Panel(
+                f"[bold]Status:[/bold] [{m_style}]{mom.get('status')}[/{m_style}]  |  "
+                f"[bold]Turnover Ratio (5D vs 22D):[/bold] {ratio_txt}  |  "
+                f"[bold]Rank Drift:[/bold] {drift_txt}  |  "
+                f"[bold]5D Δ%:[/bold] {_fmt_pct(mom.get('price_change_pct_window'))}",
+                title="Momentum & Liquidity Profile",
+                border_style="bold magenta",
+            )
+        )
+        console.print()
 
     recent = Table(
         title=f"Recent Sessions (last {len(data['recent'])})",
@@ -1325,6 +1447,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mom = sub.add_parser(
         "momentum", help="Scan multi-window turnover momentum gainers / losers"
     )
+    p_mom.add_argument("--symbol", type=str, default=None, help="Optional ticker to inspect momentum and find similar peers (e.g. GHL)")
     p_mom.add_argument("--short", type=int, default=5, help="Short window sessions (default: 5)")
     p_mom.add_argument("--base", type=int, default=22, help="Baseline window sessions (default: 22)")
     p_mom.add_argument(

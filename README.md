@@ -103,12 +103,16 @@ brokerActivity/
 │   ├── ingestion.py              # Polars: floorsheet -> daily_broker_rollup + daily_market_summary
 │   ├── screener.py               # dual-track quant screener + inspect_symbol()
 │   ├── signals.py                # persist history, load history, current-streak detection
+│   ├── analysis.py               # per-symbol rank<->broker<->price analysis + T+N prediction
+│   ├── watchlist.py              # personal research journal (watch add/note/enter/exit)
+│   ├── web.py                    # minimal JSON API for the SPA (serve via `src.cli serve`)
+│   ├── reports.py                # SPA template + cached-JSON snapshot renderer
 │   ├── cli.py                    # argparse + Rich entry point (nepse-screener)
 │   └── mock_generator.py         # synthetic seed generator (tests / demos)
 │
 ├── tests/
 │   ├── __init__.py
-│   └── test_engine.py            # 31 passing unit tests (streaks, lookbacks, momentum, wash-match ratios)
+│   └── test_engine.py            # 54 unit tests (analysis, streaks, lookbacks, momentum, wash-match ratios, web endpoints)
 │
 └── data/
     └── real/                     # host-mount for live floorsheet CSVs (YYYY-MM-DD.csv)
@@ -539,7 +543,13 @@ docker compose run --rm app python -m src.cli inspect LEC
 docker compose run --rm app python -m src.cli broker 58 --top 5
 docker compose run --rm app python -m src.cli signals --streak 2
 
-# 6. Test
+# 6. Per-symbol analysis + next-session prediction (rank<->broker<->price)
+docker compose run --rm app python -m src.cli analyze ADBL --sessions 30
+
+# 7. Web UI (http://localhost:8000 — includes an "Analyze" tab calling `GET /api/analyze/{SYMBOL}`)
+docker compose run --rm app python -m src.cli serve
+
+# 8. Test
 docker compose run --rm app python -m pytest
 ```
 

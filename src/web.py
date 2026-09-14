@@ -20,11 +20,14 @@ from urllib.parse import parse_qs, urlparse
 import polars as pl
 
 from src import reports
+from src.analysis import symbol_analyze
 from src.db import get_conn
 from src.screener import (
     load_top_turnover,
     run_screener,
     screen_turnover_momentum,
+    symbol_turnover_momentum,
+    find_similar_momentum,
     wash_report,
     broker_holdings,
     fetch_trade_dates,
@@ -173,7 +176,14 @@ class Handler(BaseHTTPRequestHandler):
         as_of = _parse_date(_first(q, "as_of"))
         short = _int(q, "short", 5)
         base = _int(q, "base", 22)
-        params = {"as_of": as_of.isoformat() if as_of else None, "short": short, "base": base}
+        sym = _first(q, "symbol")
+        symbol = sym.upper().strip() if sym else None
+        params = {
+            "as_of": as_of.isoformat() if as_of else None,
+            "short": short,
+            "base": base,
+            "symbol": symbol,
+        }
 
         def compute(conn):
             dates = fetch_trade_dates(conn)
@@ -203,7 +213,30 @@ class Handler(BaseHTTPRequestHandler):
                 base_window=base,
                 rollup=rollup,
             )
-            return {"gainers": gainers, "losers": losers}
+            sym_mom = None
+            similar = []
+            if symbol:
+                sym_mom = symbol_turnover_momentum(
+                    summary,
+                    symbol=symbol,
+                    short_window=short,
+                    base_window=base,
+                    rollup=rollup,
+                )
+                similar = find_similar_momentum(
+                    summary,
+                    symbol=symbol,
+                    short_window=short,
+                    base_window=base,
+                    rollup=rollup,
+                    top_n=5,
+                )
+            return {
+                "gainers": gainers,
+                "losers": losers,
+                "symbol_momentum": sym_mom,
+                "similar": similar,
+            }
 
         return self._cached("momentum", params, compute)
 
@@ -233,6 +266,15 @@ class Handler(BaseHTTPRequestHandler):
             "inspect",
             params,
             lambda conn: inspect_symbol(symbol.upper(), sessions=sessions),
+        )
+
+    def api_analyze(self, symbol: str, q):
+        sessions = _int(q, "sessions", 30)
+        params = {"symbol": symbol.upper(), "sessions": sessions}
+        return self._cached(
+            "analyze",
+            params,
+            lambda conn: symbol_analyze(conn, symbol.upper(), sessions=sessions),
         )
 
     def api_broker(self, broker_id: int, q):
@@ -437,6 +479,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(self.api_wash(q))
                 elif command == "inspect" and len(parts) >= 2:
                     self._send_json(self.api_inspect(parts[1], q))
+                elif command == "analyze" and len(parts) >= 2:
+                    self._send_json(self.api_analyze(parts[1], q))
                 elif command == "broker" and len(parts) >= 2:
                     try:
                         self._send_json(self.api_broker(int(parts[1]), q))

@@ -12,11 +12,14 @@ from src.screener import (
     WINDOWS,
     aggregate_window,
     classify_track_a,
+    classify_momentum_status,
     compute_broker_match_pct,
     compute_session_match_pct,
     screen_track_a,
     screen_track_b,
     screen_turnover_momentum,
+    symbol_turnover_momentum,
+    find_similar_momentum,
     stock_window_totals,
     window_dates,
 )
@@ -614,6 +617,73 @@ class TestTurnoverMomentum:
         gainers, losers = screen_turnover_momentum(short, short_window=5, base_window=22)
         assert gainers == [] and losers == []
 
+    def test_symbol_turnover_momentum(self):
+        m = self._market()
+        roll = self._rollup()
+        diag_g = symbol_turnover_momentum(m, "G", short_window=5, base_window=22, rollup=roll)
+        assert diag_g is not None
+        assert diag_g["symbol"] == "G"
+        assert diag_g["status"] == "MOMENTUM_GAINER"
+        assert diag_g["turnover_ratio"] >= 1.75
+        assert diag_g["avg_turnover_short"] == 500.0
+        assert diag_g["top_accumulator"] == 58
+        assert diag_g["top_distributor"] == 2
+        assert diag_g["percentile_turnover_ratio"] is not None
+        assert diag_g["total_market_symbols"] == 4
+
+        diag_l = symbol_turnover_momentum(m, "L", short_window=5, base_window=22)
+        assert diag_l is not None
+        assert diag_l["status"] == "MOMENTUM_LOSER"
+        assert diag_l["turnover_ratio"] <= 0.50
+
+        diag_a = symbol_turnover_momentum(m, "A", short_window=5, base_window=22)
+        assert diag_a is not None
+        assert diag_a["status"] == "HIGH_VOLUME_STABLE"
+
+        diag_none = symbol_turnover_momentum(m, "UNKNOWN", short_window=5, base_window=22)
+        assert diag_none is None
+
+    def test_classify_momentum_status_rules(self):
+        assert classify_momentum_status(10, 80, 70, 2.5) == "MOMENTUM_GAINER"
+        assert classify_momentum_status(80, 20, -60, 0.3) == "MOMENTUM_LOSER"
+        assert classify_momentum_status(60, 70, 10, 1.4) == "STEALTH_BUILDING"
+        assert classify_momentum_status(70, 60, -10, 0.6) == "LIQUIDITY_FADING"
+        assert classify_momentum_status(20, 22, 2, 1.05) == "HIGH_VOLUME_STABLE"
+        assert classify_momentum_status(100, 102, 2, 1.0) == "NEUTRAL"
+        assert classify_momentum_status(10, 80, 70, None) == "INSUFFICIENT_DATA"
+
+    def test_find_similar_momentum(self):
+        # Create market with target G and various peers
+        dates = [date(2026, 5, 1) + timedelta(days=i) for i in range(25)]
+        rows = []
+        for i, d in enumerate(dates):
+            # Target G: strong turnover gainer
+            rows.append({"trade_date": d, "symbol": "G", "close_price": 120.0 if i >= 20 else 100.0,
+                         "price_change_pct": 5.0, "total_qty": 1000,
+                         "total_turnover": 500.0 if i >= 20 else 100.0, "turnover_rank": 5 if i >= 20 else 60})
+            # Peer G_TWIN: almost identical profile
+            rows.append({"trade_date": d, "symbol": "G_TWIN", "close_price": 118.0 if i >= 20 else 100.0,
+                         "price_change_pct": 4.5, "total_qty": 950,
+                         "total_turnover": 480.0 if i >= 20 else 100.0, "turnover_rank": 6 if i >= 20 else 58})
+            # Peer L: opposite profile (loser)
+            rows.append({"trade_date": d, "symbol": "L", "close_price": 40.0 if i >= 20 else 50.0,
+                         "price_change_pct": -5.0, "total_qty": 1000,
+                         "total_turnover": 60.0 if i >= 20 else 800.0, "turnover_rank": 80 if i >= 20 else 5})
+            # Peer FLAT
+            rows.append({"trade_date": d, "symbol": "FLAT", "close_price": 50.0,
+                         "price_change_pct": 0.0, "total_qty": 500,
+                         "total_turnover": 200.0, "turnover_rank": 20})
+        df = pl.DataFrame(rows)
+
+        similar = find_similar_momentum(df, "G", short_window=5, base_window=22, top_n=3)
+        assert len(similar) >= 2
+        # Target G is excluded from its own similar list
+        assert not any(p["symbol"] == "G" for p in similar)
+        # G_TWIN must be closest peer (highest similarity score)
+        assert similar[0]["symbol"] == "G_TWIN"
+        assert similar[0]["similarity_pct"] > similar[-1]["similarity_pct"]
+        assert 0.0 <= similar[0]["similarity_pct"] <= 100.0
+
 
 class TestWatchlist:
     def test_add_reactivate_note_archive_and_history(self):
@@ -960,3 +1030,107 @@ class TestAnalysisStats:
         assert ns.func is cli.cmd_analyze
         assert ns.symbol == "LEC"
         assert ns.sessions == 10
+
+class TestAnalyzeWeb:
+    """api_analyze endpoint (symbol_analyze wiring + param defaults)."""
+
+    @staticmethod
+    def _dummy_handler():
+        from src import web
+        # _cached touches no instance attributes, so a bare Handler instance works.
+        return object.__new__(web.Handler)
+
+    def test_uppercases_symbol_and_defaults_sessions(self):
+        from unittest import mock
+        from src import web
+
+        captured = {}
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        def fake_analyze(conn, symbol, sessions=30):
+            captured["symbol"] = symbol
+            captured["sessions"] = sessions
+            return {"symbol": symbol, "timeline": [], "rank_relation": {}}
+
+        with (
+            mock.patch.object(web, "get_conn", lambda: FakeConn()),
+            mock.patch.object(web.reports, "load_snapshot", lambda *a, **k: None),
+            mock.patch.object(web.reports, "save_snapshot", lambda *a, **k: None),
+            mock.patch.object(web, "symbol_analyze", fake_analyze),
+        ):
+            res = web.Handler.api_analyze(self._dummy_handler(), "lec", {})
+        assert captured["symbol"] == "LEC"
+        assert captured["sessions"] == 30
+        assert res["cached"] is False
+        assert res["data"]["symbol"] == "LEC"
+
+    def test_custom_sessions_passed_through(self):
+        from unittest import mock
+        from src import web
+
+        captured = {}
+
+        def fake_analyze(conn, symbol, sessions=30):
+            captured["sessions"] = sessions
+            return {"symbol": symbol}
+
+        with (
+            mock.patch.object(web, "get_conn", lambda: type("C", (), {"close": lambda s: None})()),
+            mock.patch.object(web.reports, "load_snapshot", lambda *a, **k: None),
+            mock.patch.object(web.reports, "save_snapshot", lambda *a, **k: None),
+            mock.patch.object(web, "symbol_analyze", fake_analyze),
+        ):
+            res = web.Handler.api_analyze(self._dummy_handler(), "ADBL", {"sessions": ["50"]})
+        assert captured["sessions"] == 50
+        assert res["cached"] is False
+
+
+class TestMomentumCLIAndWeb:
+    """CLI parser and Web API tests for single-stock momentum."""
+
+    def test_cli_momentum_parser(self):
+        from src import cli
+        parser = cli.build_parser()
+        ns = parser.parse_args(["momentum", "--symbol", "ghl", "--short", "7", "--base", "30"])
+        assert ns.func is cli.cmd_momentum
+        assert ns.symbol == "ghl"
+        assert ns.short == 7
+        assert ns.base == 30
+
+    def test_web_momentum_api_with_symbol(self):
+        from unittest import mock
+        from src import web
+
+        captured = {}
+
+        def fake_screen(summary, short_window=5, base_window=22, rollup=None):
+            return [{"symbol": "G"}], []
+
+        def fake_symbol_mom(summary, symbol, short_window=5, base_window=22, rollup=None):
+            captured["symbol"] = symbol
+            return {"symbol": symbol, "status": "MOMENTUM_GAINER"}
+
+        def fake_similar(summary, symbol, short_window=5, base_window=22, rollup=None, top_n=5):
+            return [{"symbol": "G_TWIN", "similarity_pct": 95.0}]
+
+        handler = object.__new__(web.Handler)
+        with (
+            mock.patch.object(web, "get_conn", lambda: type("C", (), {"close": lambda s: None})()),
+            mock.patch.object(web, "fetch_trade_dates", lambda c: [date(2026, 9, 1), date(2026, 9, 2)]),
+            mock.patch.object(web, "load_summary", lambda c, d: pl.DataFrame()),
+            mock.patch.object(web, "load_rollup", lambda c, d: pl.DataFrame()),
+            mock.patch.object(web.reports, "load_snapshot", lambda *a, **k: None),
+            mock.patch.object(web.reports, "save_snapshot", lambda *a, **k: None),
+            mock.patch.object(web, "screen_turnover_momentum", fake_screen),
+            mock.patch.object(web, "symbol_turnover_momentum", fake_symbol_mom),
+            mock.patch.object(web, "find_similar_momentum", fake_similar),
+        ):
+            res = web.Handler.api_momentum(handler, {"symbol": ["ghl"], "short": ["5"], "base": ["22"]})
+        assert captured["symbol"] == "GHL"
+        assert res["data"]["gainers"] == [{"symbol": "G"}]
+        assert res["data"]["symbol_momentum"]["symbol"] == "GHL"
+        assert res["data"]["similar"][0]["symbol"] == "G_TWIN"
+

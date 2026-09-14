@@ -44,7 +44,7 @@ docker compose run --rm app python -m src.cli watch list
 |---|---|---|
 | `run` | Track A broker-flow screen plus Track B stealth-accumulation screen. | `--top`, `--top-holder-window`, `--as-of`, `--no-persist` |
 | `top` | Top turnover by a chosen date, snapshot-cached for reuse by the web API. | `--as-of`, `--limit` |
-| `momentum` | Turnover/rank movement scanner. | `--short`, `--base`, `--as-of` |
+| `momentum` | Turnover/rank movement scanner & single-stock peer matching. | `--symbol`, `--short`, `--base`, `--as-of` |
 | `wash` | Internal broker matching and cross-trade scanner. | `--window`, `--min-qty`, `--all`, `--as-of` |
 
 ### `run` — Track A and Track B
@@ -80,7 +80,12 @@ docker compose run --rm app python -m src.cli momentum
 
 Finds turnover momentum gainers and losers by comparing recent liquidity with a baseline. Defaults are **5 sessions versus 22 sessions**.
 
+Optionally pass `--symbol` to deep-dive a specific stock's turnover expansion, market rank drift percentile, momentum state badge (`MOMENTUM_GAINER`, `STEALTH_BUILDING`, `HIGH_VOLUME_STABLE`, etc.), and find similar momentum peers via normalized Euclidean distance.
+
 ```bash
+# Analyze a specific stock's momentum diagnostic and find similar peers.
+docker compose run --rm app python -m src.cli momentum --symbol SAPIL
+
 # Separate command; --short and --base belong here, not to run.
 docker compose run --rm app python -m src.cli momentum --short 5 --base 22
 
