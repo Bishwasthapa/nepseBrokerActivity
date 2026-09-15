@@ -534,6 +534,14 @@ Notes:
 - Existing databases (already-populated `pgdata`) need a one-line migration; see
   the volume-migration note in §4.
 
+### 6.10 Deterministic Scoring Engine (Position Verdicts)
+The system calculates a continuous score (from -5 to +5) for any queried symbol to produce a real-time positional verdict (**Strong Buy, Buy, Hold, Avoid / Exit**). This avoids LLM hallucination and runs completely deterministically based on:
+1. **Price Rejection**: Did the stock close near its intraday high (< 25% rejection) or was it severely dumped from highs (> 60% rejection)?
+2. **Volume Validation (RVOL)**: Does the daily volume exceed 1.5x the 20-day average, giving legitimacy to the move?
+3. **Institutional Absorption**: A Net Absorption Ratio > 1.3 (Top 3 Buyers vs Top 3 Sellers) scores positive; a ratio < 0.7 scores negative.
+4. **Wash Trade Penalty**: Over 25% internal crossed volume deducts points to filter out artificial markup.
+The final verdict is asynchronously loaded into the web UI (`lazy-verdict`) as a colored badge across most symbol tables.
+
 ---
 ## 7. CLI Usage & Daily Operations
 
