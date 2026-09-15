@@ -233,6 +233,12 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 .badge.loser{background:rgba(248,113,113,.15);color:var(--bad);border:1px solid rgba(248,113,113,.35)}
 .badge.fading{background:rgba(251,191,36,.15);color:#fbbf24;border:1px solid rgba(251,191,36,.35)}
 .badge.neutral{background:rgba(139,152,165,.15);color:var(--mut);border:1px solid rgba(139,152,165,.35)}
+.view-intro{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:8px;padding:.7rem .9rem;margin-bottom:.85rem;font-size:.82rem;line-height:1.45}
+.view-intro h2{margin:0 0 .25rem;font-size:.92rem;color:var(--text);font-weight:600}
+.view-intro p{margin:.2rem 0;color:var(--text)}
+.view-intro .tips{margin-top:.45rem;display:flex;flex-wrap:wrap;gap:.4rem;font-size:.74rem;color:var(--mut)}
+.view-intro .tag{background:rgba(255,255,255,.04);border:1px solid var(--line);padding:.12rem .4rem;border-radius:4px;color:var(--mut)}
+.view-intro .tag b{color:var(--text)}
 </style></head><body>
 <header>
   <div class="brand">NEPSE Screener</div>
@@ -252,6 +258,14 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 <div id="status"><span id="spin" class="spin hidden"></span><span id="status-msg"></span></div>
 
 <section class="view active" id="view-top">
+  <div class="view-intro">
+    <h2>Top Turnover Ranking</h2>
+    <p>Displays NEPSE equities ranked by total monetary turnover (NRS) for any trading session. Highlights where exchange liquidity, market participation, and institutional order flow are concentrated.</p>
+    <div class="tips">
+      <span class="tag"><b>Turnover (NRS)</b>: Total traded value</span>
+      <span class="tag"><b>Navigation</b>: Click any ticker to inspect historical candles &amp; broker flows</span>
+    </div>
+  </div>
   <div class="controls"><label title="Trading session to report on. Defaults to the latest; pick any session.">Session Date<input id="top-date" class="dti" type="date" list="top-dates" value="__LATEST_DATE__"></label>
   <datalist id="top-dates">__DATE_OPTS__</datalist>
   <label title="Number of highest-turnover symbols to show.">Top N<input id="top-limit" type="number" value="20" min="1"></label>
@@ -260,6 +274,15 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 </section>
 
 <section class="view" id="view-inspect">
+  <div class="view-intro">
+    <h2>Inspect Symbol Diagnostics</h2>
+    <p>Single-ticker deep dive combining multi-window price action, turnover momentum profiles, net broker inventory flows, and historical screener trigger records.</p>
+    <div class="tips">
+      <span class="tag"><b>Momentum Profile</b>: Short vs baseline liquidity expansion &amp; state badge</span>
+      <span class="tag"><b>Broker Net Flow</b>: Cumulative net buying/selling across T1 (1D), T5 (1W), T22 (1M), and T66 (1Q)</span>
+      <span class="tag"><b>Signal History</b>: Multi-day persistent scanner alerts</span>
+    </div>
+  </div>
   <div class="controls"><label title="NEPSE ticker, e.g. LEC">Ticker<input id="insp-sym" placeholder="e.g. LEC"></label>
   <label title="How many recent trading sessions to display.">Lookback<input id="insp-sess" type="number" value="22" min="5"></label>
   <button onclick="loadInspect()">Inspect</button></div>
@@ -270,6 +293,15 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 </section>
 
 <section class="view" id="view-broker">
+  <div class="view-intro">
+    <h2>Broker Holdings &amp; Flow Surveillance</h2>
+    <p>Surveillance workstation tracking an individual NEPSE member broker's accumulated stock inventory and net share flows across multi-session holding horizons.</p>
+    <div class="tips">
+      <span class="tag"><b>Net T1 / T5 / T22 / T66</b>: Net shares acquired (+) or distributed (&minus;) over 1, 5, 22, and 66 sessions</span>
+      <span class="tag"><b>Margin %</b>: Unrealized gain/loss margin vs latest close</span>
+      <span class="tag"><b>Tip</b>: Identifies persistent institutional accumulation vs retail churning</span>
+    </div>
+  </div>
   <div class="controls"><label title="NEPSE broker ID number (e.g. 18 = a specific member broker).">Broker ID<input id="brok-id" type="number" value="1" min="1" placeholder="e.g. 18"></label>
   <label title="Number of largest holdings to display.">Show Top<input id="brok-top" type="number" value="5" min="1"></label>
   <label title="How many recent trading sessions to analyse.">Lookback<input id="brok-sess" type="number" value="66" min="5"></label>
@@ -278,6 +310,16 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 </section>
 
 <section class="view" id="view-momentum">
+  <div class="view-intro">
+    <h2>Turnover Momentum &amp; Liquidity Shifts</h2>
+    <p>Dual-window liquidity rotation scanner comparing recent trading activity (e.g. 5 sessions) against a longer baseline (e.g. 22 sessions) to detect institutional buying surges, fading liquidity, and peer momentum similarity.</p>
+    <div class="tips">
+      <span class="tag"><b>Turnover Ratio</b>: Recent avg daily turnover &divide; baseline avg turnover (&gt;1.5x = expansion)</span>
+      <span class="tag"><b>Rank Drift</b>: Baseline Rank &minus; Recent Rank (positive = climbed the liquidity board)</span>
+      <span class="tag"><b>Peer Match</b>: Normalized Euclidean distance similarity (0&ndash;100%)</span>
+      <span class="tag"><b>Badges</b>: MOMENTUM_GAINER &middot; STEALTH_BUILDING &middot; HIGH_VOLUME_STABLE &middot; MOMENTUM_LOSER &middot; LIQUIDITY_FADING</span>
+    </div>
+  </div>
   <div class="controls"><label title="Optional: inspect a specific ticker's turnover momentum & find similar peer stocks.">Ticker (Optional)<input id="mom-sym" placeholder="e.g. GHL"></label>
   <label title="Number of recent trading sessions to measure (e.g. 5 ≈ 1 week, 20 ≈ 1 month). Must be shorter than Baseline Window.">Recent Window<input id="mom-short" type="number" value="5" min="1"></label>
   <label title="Longer baseline reference window (e.g. 22 ≈ 1 month, 66 ≈ 1 quarter) to compare against.">Baseline Window<input id="mom-base" type="number" value="22" min="1"></label>
@@ -290,6 +332,15 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 </section>
 
 <section class="view" id="view-wash">
+  <div class="view-intro">
+    <h2>Wash Trading &amp; Internal Broker Cross Detection</h2>
+    <p>Identifies circular and self-matched transactions where the same member broker executes both the buy and sell sides of trades for a symbol on the same trading session.</p>
+    <div class="tips">
+      <span class="tag"><b>Matched Qty</b>: min(Buy Qty, Sell Qty) internal cross volume</span>
+      <span class="tag"><b>Match %</b>: Internal matched volume percentage (Matched &times; 2 &divide; Gross)</span>
+      <span class="tag"><b>Purpose</b>: Filters artificial turnover generation, tax-swapping, and non-economic cross trades</span>
+    </div>
+  </div>
   <div class="controls"><label title="Number of recent sessions to scan for internal broker matching.">Lookback<input id="wash-wnd" type="number" value="22" min="5"></label>
   <label title="Minimum total quantity for a wash match to count.">Min Volume<input id="wash-mq" type="number" value="5000" min="0"></label>
   <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="wash-asof" class="dti" type="date" value="__LATEST_DATE__"></label>
@@ -299,6 +350,14 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 </section>
 
 <section class="view" id="view-run">
+  <div class="view-intro">
+    <h2>Dual-Track Quantitative Screener</h2>
+    <p>Runs dual-track market screening with dominant-broker overlays to classify high-volume market leaders and detect stealth institutional accumulation.</p>
+    <div class="tips">
+      <span class="tag"><b>Track A (Top 30 Turnover)</b>: Institutional Accumulation &middot; Bull Traps / Distribution &middot; Capitulation &middot; Breakouts</span>
+      <span class="tag"><b>Track B (Ranks 31+)</b>: Silent accumulation where top broker absorbs &ge;15% of daily volume with positive returns</span>
+    </div>
+  </div>
   <div class="controls"><label title="Size of the top-turnover universe scanned for Track A.">Turnover Top N<input id="run-top" type="number" value="20" min="1"></label>
   <label title="Sessions used to identify the dominant net-buyer broker per symbol (22 ≈ 1 month, 66 ≈ quarterly).">Dominant Broker Window<input id="run-holder" type="number" value="22"></label>
   <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="run-asof" class="dti" type="date" value="__LATEST_DATE__"></label>
@@ -308,6 +367,14 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 </section>
 
 <section class="view" id="view-signals">
+  <div class="view-intro">
+    <h2>Historical Screener Signals &amp; Streaks</h2>
+    <p>Searchable audit database of historical Track A and Track B screener alerts to identify sustained accumulation campaigns and verify setup persistence.</p>
+    <div class="tips">
+      <span class="tag"><b>Min Streak</b>: Consecutive live trading sessions with active screener signals (weekends excluded)</span>
+      <span class="tag"><b>Persistence</b>: Streaks &ge;2 sessions show substantially higher statistical follow-through</span>
+    </div>
+  </div>
   <div class="controls"><label title="Filter by ticker.">Ticker<input id="sig-sym" placeholder="e.g. LEC"></label>
   <label title="Filter by broker ID.">Broker ID<input id="sig-broker" type="number" min="1" placeholder="any"></label>
   <label title="Filter by signal name.">Signal Type<input id="sig-signal" placeholder="e.g. SILENT_ACCUMULATION"></label>
@@ -319,6 +386,14 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 </section>
 
 <section class="view" id="view-analyze">
+  <div class="view-intro">
+    <h2>Rank &harr; Price Correlation &amp; Broker Signatures</h2>
+    <p>Statistical predictability engine analyzing how turnover board leadership and broker crowd behaviors correlate with future price performance and directional edge.</p>
+    <div class="tips">
+      <span class="tag"><b>Broker Signatures</b>: MULTI (broad buying) &middot; SINGLE (lone driver) &middot; DISTRIBUTE (net selling) &middot; NEUTRAL</span>
+      <span class="tag"><b>Prediction Horizons</b>: Historical win rates and average returns over T+1, T+3, and T+5 windows</span>
+    </div>
+  </div>
   <div class="controls"><label title="NEPSE ticker, e.g. ADBL">Ticker<input id="anl-sym" placeholder="e.g. ADBL"></label>
   <label title="Number of recent trading sessions analysed + prediction window.">Lookback<input id="anl-sess" type="number" value="30" min="5"></label>
   <button onclick="loadAnalyze()">Analyze</button></div>
@@ -330,6 +405,15 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 </section>
 
 <section class="view" id="view-watchlist">
+  <div class="view-intro">
+    <h2>Personal Research Journal &amp; Trade Planner</h2>
+    <p>Durable research notebook to record investment theses, thematic tags, planned trade execution levels (entry, target, stop), and chronological dated field notes with live PnL tracking.</p>
+    <div class="tips">
+      <span class="tag"><b>Active / Archive</b>: Retain completed trade journals while archiving inactive setups</span>
+      <span class="tag"><b>Live PnL</b>: Automatically marked to market against the latest session closing price</span>
+      <span class="tag"><b>CLI Sync</b>: Fully synced with CLI commands (<code>watch add</code>, <code>watch note</code>, <code>watch enter</code>, <code>watch exit</code>)</span>
+    </div>
+  </div>
   <div class="block"><h3>Add symbol</h3><div class="controls">
     <label title="NEPSE ticker, e.g. LEC">Symbol<input id="wl-symbol" placeholder="e.g. LEC"></label>
     <label title="Why the ticker is on watch">Thesis<input id="wl-thesis" placeholder="optional"></label>
