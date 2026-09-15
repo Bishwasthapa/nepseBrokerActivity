@@ -46,11 +46,28 @@ CREATE TABLE IF NOT EXISTS daily_market_summary (
     total_qty         BIGINT         NOT NULL,
     total_turnover    NUMERIC(18, 2) NOT NULL,
     turnover_rank     INT            NOT NULL,
+    sector            VARCHAR(50),
+    market_cap        NUMERIC(16, 2),
+    fifty_two_week_high NUMERIC(10, 2),
+    fifty_two_week_low  NUMERIC(10, 2),
+    vwap              NUMERIC(10, 2),
     PRIMARY KEY (trade_date, symbol)
 );
 
 CREATE INDEX IF NOT EXISTS idx_summary_date_rank
     ON daily_market_summary (trade_date, turnover_rank);
+
+-- Security metadata (sector, market cap, 52w range)
+CREATE TABLE IF NOT EXISTS securities_meta (
+    symbol              VARCHAR(20)    PRIMARY KEY,
+    company_name        VARCHAR(120),
+    sector              VARCHAR(50),
+    instrument_type     VARCHAR(30),
+    market_cap          NUMERIC(16, 2),
+    fifty_two_week_high NUMERIC(10, 2),
+    fifty_two_week_low  NUMERIC(10, 2),
+    updated_at          TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 -- Historical screening signals for streak detection / backtesting.
 CREATE TABLE IF NOT EXISTS screener_signals_history (
@@ -114,3 +131,12 @@ CREATE TABLE IF NOT EXISTS watchlist_notes (
 
 CREATE INDEX IF NOT EXISTS idx_watchlist_status ON watchlist(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_watchlist_notes_symbol ON watchlist_notes(symbol, note_date DESC, id DESC);
+
+-- Idempotent migrations for daily_market_summary metadata
+ALTER TABLE daily_market_summary ADD COLUMN IF NOT EXISTS sector VARCHAR(50);
+ALTER TABLE daily_market_summary ADD COLUMN IF NOT EXISTS market_cap NUMERIC(16, 2);
+ALTER TABLE daily_market_summary ADD COLUMN IF NOT EXISTS fifty_two_week_high NUMERIC(10, 2);
+ALTER TABLE daily_market_summary ADD COLUMN IF NOT EXISTS fifty_two_week_low NUMERIC(10, 2);
+ALTER TABLE daily_market_summary ADD COLUMN IF NOT EXISTS vwap NUMERIC(10, 2);
+CREATE INDEX IF NOT EXISTS idx_summary_sector ON daily_market_summary (sector, trade_date);
+

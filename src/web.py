@@ -34,6 +34,7 @@ from src.screener import (
     load_rollup,
     load_summary,
     inspect_symbol,
+    position_analysis,
 )
 from src.watchlist import (
     add_note as watch_note,
@@ -143,11 +144,22 @@ class Handler(BaseHTTPRequestHandler):
     def api_top(self, q):
         as_of = _parse_date(_first(q, "as_of"))
         limit = _int(q, "limit", 20)
-        params = {"as_of": as_of.isoformat() if as_of else None, "limit": limit}
+        sector = _first(q, "sector") or None
+        cap_tier = _first(q, "cap_tier") or None
+        if cap_tier:
+            cap_tier = cap_tier.upper().strip()
+        params = {
+            "as_of": as_of.isoformat() if as_of else None,
+            "limit": limit,
+            "sector": sector,
+            "cap_tier": cap_tier,
+        }
         return self._cached(
             "top",
             params,
-            lambda conn: load_top_turnover(conn, as_of=as_of, limit=limit),
+            lambda conn: load_top_turnover(
+                conn, as_of=as_of, limit=limit, sector=sector, cap_tier=cap_tier
+            ),
         )
 
     def api_run(self, q):
@@ -155,10 +167,16 @@ class Handler(BaseHTTPRequestHandler):
         top = _int(q, "top", 20)
         window = _int(q, "top_holder_window", 22)
         no_persist = _bool(q, "no_persist", True)
+        sector = _first(q, "sector") or None
+        cap_tier = _first(q, "cap_tier") or None
+        if cap_tier:
+            cap_tier = cap_tier.upper().strip()
         params = {
             "as_of": as_of.isoformat() if as_of else None,
             "top": top,
             "top_holder_window": window,
+            "sector": sector,
+            "cap_tier": cap_tier,
         }
 
         def compute(conn):
@@ -167,6 +185,8 @@ class Handler(BaseHTTPRequestHandler):
                 persist=not no_persist,
                 top_turnover=top,
                 top_holder_window=window,
+                sector=sector,
+                cap_tier=cap_tier,
             )
             return {"meta": meta, "track_a": track_a, "track_b": track_b}
 
@@ -276,6 +296,27 @@ class Handler(BaseHTTPRequestHandler):
             params,
             lambda conn: symbol_analyze(conn, symbol.upper(), sessions=sessions),
         )
+
+    def api_sectors(self, q):
+        """Return distinct sector names from the market summary table."""
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT DISTINCT sector FROM daily_market_summary "
+                    "WHERE sector IS NOT NULL AND TRIM(sector) != '' "
+                    "ORDER BY sector ASC"
+                )
+                sectors = [r[0] for r in cur.fetchall()]
+        finally:
+            conn.close()
+        return {"cached": False, "data": sectors}
+
+    def api_position(self, symbol: str, q):
+        data = position_analysis(symbol.upper())
+        if data.get("error"):
+            return {"cached": False, "params": {"symbol": symbol.upper()}, "data": data}
+        return {"cached": False, "params": {"symbol": symbol.upper()}, "data": data}
 
     def api_broker(self, broker_id: int, q):
         sessions = _int(q, "sessions", 66)
@@ -488,6 +529,10 @@ class Handler(BaseHTTPRequestHandler):
                         self._send_json({"error": "broker id must be an integer"}, 400)
                 elif command == "signals":
                     self._send_json(self.api_signals(q))
+                elif command == "sectors":
+                    self._send_json(self.api_sectors(q))
+                elif command == "position" and len(parts) >= 2:
+                    self._send_json(self.api_position(parts[1], q))
                 elif command == "watchlist" and len(parts) >= 2:
                     self._send_json(self.api_watchitem(parts[1], q))
                 elif command == "watchlist":
@@ -497,7 +542,10 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self._send_json({"error": f"unknown endpoint: {command}"}, 404)
             except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": repr(exc)}, 500)
+                import traceback
+
+                traceback.print_exc()
+                self._send_json({"error": str(exc) or repr(exc)}, 500)
             return
 
         self._send_404("Not found")

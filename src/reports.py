@@ -47,13 +47,25 @@ def _fingerprint() -> str:
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT COUNT(*), MAX(trade_date) FROM daily_market_summary"
-            )
-            summary_count, latest = cur.fetchone()
+            try:
+                cur.execute(
+                    "SELECT COUNT(*), COUNT(market_cap), MAX(trade_date) FROM daily_market_summary"
+                )
+                res = cur.fetchone()
+                summary_count, mcap_count, latest = res if res else (0, 0, None)
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                cur.execute(
+                    "SELECT COUNT(*), MAX(trade_date) FROM daily_market_summary"
+                )
+                summary_count, latest = cur.fetchone()
+                mcap_count = 0
             cur.execute("SELECT COUNT(*) FROM daily_broker_rollup")
             rollup_count = cur.fetchone()[0]
-        raw = f"{latest}|{summary_count}|{rollup_count}"
+        raw = f"{latest}|{summary_count}|{mcap_count}|{rollup_count}"
     except Exception:
         raw = "empty"
     finally:
@@ -99,8 +111,14 @@ def save_snapshot(command: str, params: dict, data, meta=None) -> Path:
         "data": data,
     }
     path = snapshot_path(command, params)
-    path.write_text(to_json(payload))
-    regenerate_index()
+    try:
+        path.write_text(to_json(payload))
+    except Exception:
+        pass
+    try:
+        regenerate_index()
+    except Exception:
+        pass
     return path
 
 
@@ -184,7 +202,10 @@ main{padding:1rem;max-width:1120px;margin:0 auto}
 .block{margin:1.1rem 0}
 .block h3{margin:.2rem 0 .5rem;color:var(--mut);font-weight:600;font-size:.95rem}
 table{width:100%;border-collapse:collapse;font-size:.84rem;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
-th,td{padding:.42rem .6rem;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th,td{padding:.42rem .6rem;vertical-align:middle;border-bottom:1px solid var(--line);white-space:nowrap}
+th.text-left,td.text-left{text-align:left}
+th.text-center,td.text-center{text-align:center}
+th.text-right,td.text-right{text-align:right}
 th{background:#1c2631;color:var(--mut);font-weight:600}
 tbody tr:hover td{background:#1b2530}
 .num{text-align:right;font-variant-numeric:tabular-nums}
@@ -227,12 +248,18 @@ td.actions{white-space:nowrap}
 td.actions button{background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--mut);cursor:pointer;font-size:.72rem;padding:.14rem .42rem;margin-right:.25rem}
 td.actions button:hover{color:var(--acc);border-color:var(--acc)}
 .badge{display:inline-block;padding:.18rem .45rem;border-radius:4px;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+.badge[data-cap],.badge[data-sec]{cursor:pointer;text-decoration:none;transition:all .15s}
+.badge[data-cap]:hover,.badge[data-sec]:hover{transform:translateY(-1px);filter:brightness(1.2)}
 .badge.gainer{background:rgba(52,211,153,.15);color:var(--ok);border:1px solid rgba(52,211,153,.35)}
 .badge.stealth{background:rgba(77,163,255,.15);color:var(--acc);border:1px solid rgba(77,163,255,.35)}
 .badge.stable{background:rgba(216,180,254,.15);color:var(--vio);border:1px solid rgba(216,180,254,.35)}
 .badge.loser{background:rgba(248,113,113,.15);color:var(--bad);border:1px solid rgba(248,113,113,.35)}
 .badge.fading{background:rgba(251,191,36,.15);color:#fbbf24;border:1px solid rgba(251,191,36,.35)}
 .badge.neutral{background:rgba(139,152,165,.15);color:var(--mut);border:1px solid rgba(139,152,165,.35)}
+.badge.large{background:rgba(52,211,153,.15);color:var(--ok);border:1px solid rgba(52,211,153,.35)}
+.badge.mid{background:rgba(77,163,255,.15);color:var(--acc);border:1px solid rgba(77,163,255,.35)}
+.badge.small{background:rgba(216,180,254,.15);color:var(--vio);border:1px solid rgba(216,180,254,.35)}
+.badge.sec{background:rgba(255,255,255,.06);color:var(--text);border:1px solid var(--line);text-transform:none}
 .view-intro{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:8px;padding:.7rem .9rem;margin-bottom:.85rem;font-size:.82rem;line-height:1.45}
 .view-intro h2{margin:0 0 .25rem;font-size:.92rem;color:var(--text);font-weight:600}
 .view-intro p{margin:.2rem 0;color:var(--text)}
@@ -244,6 +271,7 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   <div class="brand">NEPSE Screener</div>
   <nav>
     <button class="active" data-view="top" title="Top turnover ranking across the exchange for a given trading session.">Top Turnover</button>
+    <button data-view="position" title="Long-only positioning breakdown and actionable verdict.">Position</button>
     <button data-view="inspect" title="Single-stock deep dive: price history, broker net flows, and screener signals.">Inspect Symbol</button>
     <button data-view="broker" title="Broker holdings &amp; activity: multi-session net flows and accumulated symbols.">Broker</button>
     <button data-view="momentum" title="Turnover &amp; rank rotation: compare recent vs baseline liquidity shifts.">Momentum</button>
@@ -263,21 +291,50 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
     <p>Displays NEPSE equities ranked by total monetary turnover (NRS) for any trading session. Highlights where exchange liquidity, market participation, and institutional order flow are concentrated.</p>
     <div class="tips">
       <span class="tag"><b>Turnover (NRS)</b>: Total traded value</span>
+      <span class="tag"><b>Sector &amp; Cap Tier</b>: Classification and size segmentation</span>
       <span class="tag"><b>Navigation</b>: Click any ticker to inspect historical candles &amp; broker flows</span>
     </div>
   </div>
   <div class="controls"><label title="Trading session to report on. Defaults to the latest; pick any session.">Session Date<input id="top-date" class="dti" type="date" list="top-dates" value="__LATEST_DATE__"></label>
   <datalist id="top-dates">__DATE_OPTS__</datalist>
+  <label title="Filter by sector name (e.g. Hydro Power, Commercial Banks)">Sector
+    <select id="top-sector" class="input-filter" onchange="loadTop()">
+      <option value="">All Sectors</option>
+    </select>
+  </label>
+  <label title="Filter by market cap tier">Cap Tier
+    <select id="top-cap" onchange="loadTop()">
+      <option value="">All Tiers</option>
+      <option value="LARGE">Large-Cap (&ge;20B)</option>
+      <option value="MID">Mid-Cap (5B&ndash;20B)</option>
+      <option value="SMALL">Small-Cap (&lt;5B)</option>
+    </select>
+  </label>
   <label title="Number of highest-turnover symbols to show.">Top N<input id="top-limit" type="number" value="20" min="1"></label>
   <button onclick="loadTop()">Load</button></div>
   <div class="block"><h3>Top by total turnover</h3><div id="top-out" class="empty">Pick a trading date (clear it for the latest) and click Load. Click any symbol to inspect it.</div></div>
 </section>
 
+<section class="view" id="view-position">
+  <div class="view-intro">
+    <h2>Positioning Breakdown</h2>
+    <p>Data-driven long-only positioning breakdown assessing supply absorption, operator intent, and price action.</p>
+    <div class="tips">
+      <span class="tag"><b>Verdict</b>: Strong Buy / Buy / Hold / Avoid</span>
+    </div>
+  </div>
+  <div class="controls"><label title="NEPSE ticker, e.g. LEC">Ticker<input id="pos-sym" placeholder="e.g. LEC" onkeydown="if(event.key==='Enter')loadPosition()"></label>
+  <button onclick="loadPosition()">Inspect</button></div>
+  <div class="block"><h3 id="pos-h">Data Context</h3><div id="pos-context" class="empty">Type a ticker and click Inspect.</div></div>
+  <div class="block"><h3>3-Line Breakdown</h3><div id="pos-breakdown" class="empty"></div></div>
+</section>
+
 <section class="view" id="view-inspect">
   <div class="view-intro">
     <h2>Inspect Symbol Diagnostics</h2>
-    <p>Single-ticker deep dive combining multi-window price action, turnover momentum profiles, net broker inventory flows, and historical screener trigger records.</p>
+    <p>Single-ticker deep dive combining multi-window price action, 52-week price channels, turnover momentum profiles, net broker inventory flows, and historical screener trigger records.</p>
     <div class="tips">
+      <span class="tag"><b>Fundamental Context</b>: Sector, market cap tier, and 52-week channel position</span>
       <span class="tag"><b>Momentum Profile</b>: Short vs baseline liquidity expansion &amp; state badge</span>
       <span class="tag"><b>Broker Net Flow</b>: Cumulative net buying/selling across T1 (1D), T5 (1W), T22 (1M), and T66 (1Q)</span>
       <span class="tag"><b>Signal History</b>: Multi-day persistent scanner alerts</span>
@@ -286,6 +343,7 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   <div class="controls"><label title="NEPSE ticker, e.g. LEC">Ticker<input id="insp-sym" placeholder="e.g. LEC"></label>
   <label title="How many recent trading sessions to display.">Lookback<input id="insp-sess" type="number" value="22" min="5"></label>
   <button onclick="loadInspect()">Inspect</button></div>
+  <div class="block" id="insp-meta-wrap" style="display:none"><h3>Fundamental &amp; Technical Profile</h3><div id="insp-meta"></div></div>
   <div class="block" id="insp-mom-wrap" style="display:none"><h3>Momentum &amp; Liquidity Profile</h3><div id="insp-mom"></div></div>
   <div class="block"><h3 id="recent-h">Daily History</h3><div id="insp-recent" class="empty">Type a ticker and click Inspect.</div></div>
   <div class="block"><h3>Broker Net Flows</h3><div id="insp-brokers"></div></div>
@@ -356,10 +414,24 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
     <div class="tips">
       <span class="tag"><b>Track A (Top 30 Turnover)</b>: Institutional Accumulation &middot; Bull Traps / Distribution &middot; Capitulation &middot; Breakouts</span>
       <span class="tag"><b>Track B (Ranks 31+)</b>: Silent accumulation where top broker absorbs &ge;15% of daily volume with positive returns</span>
+      <span class="tag"><b>Sector &amp; Cap Filters</b>: Focus scan on specific sectors or market-cap tiers</span>
     </div>
   </div>
   <div class="controls"><label title="Size of the top-turnover universe scanned for Track A.">Turnover Top N<input id="run-top" type="number" value="20" min="1"></label>
   <label title="Sessions used to identify the dominant net-buyer broker per symbol (22 ≈ 1 month, 66 ≈ quarterly).">Dominant Broker Window<input id="run-holder" type="number" value="22"></label>
+  <label title="Filter by sector name">Sector
+    <select id="run-sector" class="input-filter" onchange="loadRun()">
+      <option value="">All Sectors</option>
+    </select>
+  </label>
+  <label title="Filter by market cap tier">Cap Tier
+    <select id="run-cap" onchange="loadRun()">
+      <option value="">All Tiers</option>
+      <option value="LARGE">Large-Cap (&ge;20B)</option>
+      <option value="MID">Mid-Cap (5B&ndash;20B)</option>
+      <option value="SMALL">Small-Cap (&lt;5B)</option>
+    </select>
+  </label>
   <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="run-asof" class="dti" type="date" value="__LATEST_DATE__"></label>
   <button onclick="loadRun()">Run Scan</button></div>
   <div class="block"><h3>Track A &mdash; Broker Flow Signals</h3><div id="run-a" class="empty">Runs Track A + Track B with a dominant-broker overlay.</div></div>
@@ -438,6 +510,22 @@ var fmt=function(v,d){d=d==null?2:d;return (v===null||v===undefined)?'\u2014':Nu
 var fmtInt=function(v){return (v===null||v===undefined)?'\u2014':Number(v).toLocaleString('en-US');};
 var pctCls=function(v){return (v===null||v===undefined)?'mut':(v>=0?'pos':'neg');};
 var pct=function(v){if(v===null||v===undefined)return '\u2014';return (v>=0?'+':'')+Number(v).toFixed(2)+'%';};
+async function initSectorDropdowns(){
+  try{
+    const res=await fetch('/api/sectors');
+    if(!res.ok)return;
+    const data=await res.json();
+    const sectors=data.data||data;
+    ['top-sector','run-sector'].forEach(id=>{
+      const el=q(id);
+      if(!el)return;
+      const currentVal=el.value;
+      el.innerHTML='<option value="">All Sectors</option>'+sectors.map(s=>'<option value="'+s+'">'+s+'</option>').join('');
+      if(currentVal)el.value=currentVal;
+    });
+  }catch(err){console.error('Failed to load sectors:',err);}
+}
+document.addEventListener('DOMContentLoaded',initSectorDropdowns);
 function showTab(name){var sels=document.querySelectorAll('.view');for(var i=0;i<sels.length;i++)sels[i].classList.remove('active');
 var btns=document.querySelectorAll('nav button');for(var i=0;i<btns.length;i++)btns[i].classList.toggle('active',btns[i].dataset.view===name);
 q('view-'+name).classList.add('active');}
@@ -447,33 +535,132 @@ function setStatus(m){q('status-msg').textContent=m;}
 var _busy=0;
 function busy(on){_busy+=on?1:-1;if(_busy<0)_busy=0;var s=q('spin');if(s)s.className='spin'+(_busy>0?'':' hidden');}
 function badgeHtml(st){if(!st)return'\u2014';var cls='neutral';if(st==='MOMENTUM_GAINER')cls='gainer';else if(st==='STEALTH_BUILDING')cls='stealth';else if(st==='HIGH_VOLUME_STABLE')cls='stable';else if(st==='MOMENTUM_LOSER')cls='loser';else if(st==='LIQUIDITY_FADING')cls='fading';return '<span class="badge '+cls+'">'+st+'</span>';}
+function capBadgeHtml(cap){if(!cap||cap==='UNKNOWN')return '<span class="badge neutral" title="Market cap unclassified">\u2014</span>';var cls='small';if(cap==='LARGE')cls='large';else if(cap==='MID')cls='mid';return '<a class="badge '+cls+'" data-cap="'+cap+'" title="Filter by '+cap+' cap tier">'+cap+'</a>';}
+function secBadgeHtml(sec){if(!sec)return '\u2014';return '<a class="badge sec" data-sec="'+sec+'" title="Filter by '+sec+' sector">'+sec+'</a>';}
+function renderInspectMeta(d){
+  if(!d)return '';
+  var sec=d.sector?secBadgeHtml(d.sector):'\u2014';
+  var cap=d.cap_tier?capBadgeHtml(d.cap_tier):'\u2014';
+  if(d.market_cap)cap+=' <span class="mut">('+fmt(d.market_cap,1)+'M NPR)</span>';
+  var r52='\u2014';
+  if(d.fifty_two_week_high!=null&&d.fifty_two_week_low!=null){
+    r52='NRS '+fmt(d.fifty_two_week_low)+' \u2192 NRS '+fmt(d.fifty_two_week_high);
+    if(d.distance_52w_high_pct!=null&&d.distance_52w_low_pct!=null){
+      r52+=' <span class="mut">('+(d.distance_52w_high_pct>=0?'+':'')+d.distance_52w_high_pct.toFixed(1)+'% to High, '+(d.distance_52w_low_pct>=0?'+':'')+d.distance_52w_low_pct.toFixed(1)+'% to Low)</span>';
+    }
+    if(d.range_52w_pct!=null){
+      r52+=' <span class="tag"><b>'+d.range_52w_pct.toFixed(1)+'%</b> within 52W range</span>';
+    }
+  }
+  var vwapTxt=(d.vwap!=null)?('NRS '+fmt(d.vwap)):'\u2014';
+  var rows=[
+    ['Sector',sec],
+    ['Market Cap Tier',cap],
+    ['52-Week Channel',r52],
+    ['Session VWAP',vwapTxt]
+  ];
+  var h='<table class="meta"><tbody>';
+  for(var i=0;i<rows.length;i++)h+='<tr><th>'+rows[i][0]+'</th><td>'+rows[i][1]+'</td></tr>';
+  return h+'</tbody></table>';
+}
 function renderMomentumCard(m,s,b){if(!m)return '<div class="empty">No momentum diagnostic available.</div>';var statusBadge=badgeHtml(m.status);var ratioTxt=(m.turnover_ratio!==null&&m.turnover_ratio!==undefined)?(m.turnover_ratio.toFixed(2)+'x'):'\u2014';if(m.percentile_turnover_ratio!==null&&m.percentile_turnover_ratio!==undefined){ratioTxt+=' <span class="mut">(Top '+(100.0-m.percentile_turnover_ratio).toFixed(1)+'% on NEPSE)</span>';}var driftTxt=(m.rank_drift!==null&&m.rank_drift!==undefined)?((m.rank_drift>0?'+':'')+m.rank_drift.toFixed(1)):'\u2014';if(m.percentile_rank_drift!==null&&m.percentile_rank_drift!==undefined){driftTxt+=' <span class="mut">(Top '+(100.0-m.percentile_rank_drift).toFixed(1)+'% drift)</span>';}var chgTxt=(m.price_change_pct_window!==null&&m.price_change_pct_window!==undefined)?((m.price_change_pct_window>0?'+':'')+m.price_change_pct_window.toFixed(2)+'%'):'\u2014';var closeTxt=(m.close!==null&&m.close!==undefined)?('NRS '+fmt(m.close)):'\u2014';var rows=[['Status',statusBadge],['Turnover Ratio ('+(s||5)+'D vs '+(b||22)+'D)',ratioTxt],['Daily Turnover (Mean)','Recent '+(s||5)+'D: '+(m.avg_turnover_short?('NRS '+fmt(m.avg_turnover_short)):'\u2014')+' | Baseline '+(b||22)+'D: '+(m.avg_turnover_base?('NRS '+fmt(m.avg_turnover_base)):'\u2014')],['Turnover Rank Progression','Baseline #'+m.avg_rank_base+' \u2192 Recent #'+m.avg_rank_short+' (Drift: '+driftTxt+')'],['Recent Window \u0394% / Close','<span class="'+pctCls(m.price_change_pct_window)+'">'+chgTxt+'</span> | '+closeTxt],['Dominant Brokers','Accumulator (Buyer): '+(m.top_accumulator?'<a class="broker" data-broker="'+m.top_accumulator+'">'+m.top_accumulator+'</a>':'\u2014')+' | Distributor (Seller): '+(m.top_distributor?'<a class="broker" data-broker="'+m.top_distributor+'">'+m.top_distributor+'</a>':'\u2014')]];var h='<table class="meta"><tbody>';for(var i=0;i<rows.length;i++)h+='<tr><th>'+rows[i][0]+'</th><td>'+rows[i][1]+'</td></tr>';return h+'</tbody></table>';}
 
 function renderTable(rows,cols){if(!rows||!rows.length)return '<div class="empty">No data.</div>';
-var h='<table><thead><tr>';for(var i=0;i<cols.length;i++)h+='<th'+(cols[i].desc?' class="has-help" title="'+cols[i].desc+'">':'')+'>'+cols[i].label+'</th>';h+='</tr></thead><tbody>';
-for(var r=0;r<rows.length;r++){var row=rows[r];h+='<tr>';for(var i=0;i<cols.length;i++){var c=cols[i],v=row[c.key],cls='',td;
-if(c.type==='num'){cls='num';td=fmt(v);}
-else if(c.type==='int'){cls='num';td=fmtInt(v);}
-else if(c.type==='pct'){cls='num '+pctCls(v);td=pct(v);}
-else if(c.type==='pct_raw'){cls='num';td=(v===null||v===undefined)?'\u2014':Number(v).toFixed(1)+'%';}
-else if(c.type==='badge'){cls='';td=badgeHtml(v);}
-else if(c.type==='sym'){cls='';td='<a class="sym" data-sym="'+v+'">'+v+'</a>';}
-else if(c.type==='wsym'){cls='';td='<a class="sym" data-ws="'+v+'">'+v+'</a>';}
-else if(c.type==='broker'){cls='';td='<a class="broker" data-broker="'+v+'">'+v+'</a>';}
-else{cls='';td=(v===null||v===undefined)?'\u2014':v;}
-h+='<td class="'+cls+'">'+td+'</td>';}
+var h='<table><thead><tr>';for(var i=0;i<cols.length;i++){
+var thCls=cols[i].cls?(' '+cols[i].cls):'';
+var hasHelp=cols[i].desc?' has-help':'';
+h+='<th class="'+(thCls+hasHelp).trim()+'"'+(cols[i].desc?' title="'+cols[i].desc+'"':'')+'>'+cols[i].label+'</th>';}
+h+='</tr></thead><tbody>';
+for(var r=0;r<rows.length;r++){var row=rows[r];h+='<tr>';for(var i=0;i<cols.length;i++){var c=cols[i],v=row[c.key],cls=c.cls?c.cls:'',td;
+if(c.type==='num'){cls+=' num text-right';td=fmt(v);}
+else if(c.type==='int'){cls+=' num text-right';td=fmtInt(v);}
+else if(c.type==='pct'){cls+=' num text-right '+pctCls(v);td=pct(v);}
+else if(c.type==='pct_raw'){cls+=' num text-right';td=(v===null||v===undefined)?'\u2014':Number(v).toFixed(1)+'%';}
+else if(c.type==='badge'){cls+=' text-center';td=badgeHtml(v);}
+else if(c.type==='cap'){cls+=' text-center';td=capBadgeHtml(v);}
+else if(c.type==='sec'){cls+=' text-center';td=secBadgeHtml(v);}
+else if(c.type==='sym'){cls+=' text-center';td='<a class="sym" data-sym="'+v+'">'+v+'</a>';}
+else if(c.type==='wsym'){cls+=' text-center';td='<a class="sym" data-ws="'+v+'">'+v+'</a>';}
+else if(c.type==='broker'){cls+=' text-center';td='<a class="broker" data-broker="'+v+'">'+v+'</a>';}
+else{td=(v===null||v===undefined)?'\u2014':v;}
+h+='<td class="'+cls.trim()+'">'+td+'</td>';}
 h+='</tr>';}
 h+='</tbody></table>';return h;}
 function bindClicks(container){if(!container)return;container.addEventListener('click',function(e){
 var s=e.target.closest('a[data-sym]');if(s){q('insp-sym').value=s.dataset.sym;updateTab('inspect');loadInspect();return;}
-var b=e.target.closest('a[data-broker]');if(b){q('brok-id').value=b.dataset.broker;updateTab('broker');loadBroker();}});}
-function api(path){setStatus('Loading '+path+'\u2026');busy(true);return fetch('/api/'+path).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){setStatus((j.cached?'cached: ':'computed: ')+path);return j.data;}).catch(function(e){setStatus('Error: '+e.message);return null;}).finally(function(){busy(false);});}
-var TOP_COLS=[{key:'rank',label:'Rank',desc:'Turnover rank across the exchange (1 = highest turnover)'},{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},{key:'close',label:'Close',type:'num',desc:'Session closing price in NRS'},{key:'change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change %'},{key:'qty',label:'Qty',type:'int',desc:'Total shares traded that session'},{key:'turnover',label:'Turnover',type:'num',desc:'Total session turnover in NRS'}];
-function loadTop(){var d=val('top-date'),l=val('top-limit')||20;api('top?as_of='+encodeURIComponent(d)+'&limit='+l).then(function(data){if(!data)return;q('top-out').innerHTML=renderTable(data.rows,TOP_COLS);bindClicks(q('top-out'));});}
+var b=e.target.closest('a[data-broker]');if(b){q('brok-id').value=b.dataset.broker;updateTab('broker');loadBroker();return;}
+var c=e.target.closest('a[data-cap]');if(c){var capVal=c.dataset.cap;if(q('top-cap'))q('top-cap').value=capVal;if(q('run-cap'))q('run-cap').value=capVal;updateTab('top');loadTop();return;}
+var sec=e.target.closest('a[data-sec]');if(sec){var secVal=sec.dataset.sec;if(q('top-sector'))q('top-sector').value=secVal;if(q('run-sector'))q('run-sector').value=secVal;updateTab('top');loadTop();return;}
+});}
+function api(path){setStatus('Loading '+path+'\u2026');busy(true);return fetch('/api/'+path).then(function(r){if(!r.ok){return r.json().catch(function(){return {error:'HTTP '+r.status};}).then(function(err){throw new Error((err&&err.error)?err.error:('HTTP '+r.status));});}return r.json();}).then(function(j){setStatus((j.cached?'cached: ':'computed: ')+path);return j.data;}).catch(function(e){setStatus('Error: '+e.message);return null;}).finally(function(){busy(false);});}
+var TOP_COLS=[
+  {key:'rank',label:'Rank',desc:'Turnover rank across the exchange (1 = highest turnover)'},
+  {key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},
+  {key:'sector',label:'Sector',type:'sec',desc:'NEPSE industry classification'},
+  {key:'cap_tier',label:'Cap',type:'cap',desc:'Market cap tier: LARGE (>=20B), MID (5B-20B), SMALL (<5B)'},
+  {key:'close',label:'Close',type:'num',desc:'Session closing price in NRS'},
+  {key:'vwap',label:'VWAP',type:'num',desc:'Session volume-weighted average price'},
+  {key:'change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change %'},
+  {key:'qty',label:'Qty',type:'int',desc:'Total shares traded that session'},
+  {key:'turnover',label:'Turnover',type:'num',desc:'Total session turnover in NRS'}
+];
+function loadTop(){
+  var d=val('top-date'),l=val('top-limit')||20,s=val('top-sector'),c=val('top-cap');
+  var url='top?as_of='+encodeURIComponent(d)+'&limit='+l;
+  if(s)url+='&sector='+encodeURIComponent(s.trim());
+  if(c)url+='&cap_tier='+encodeURIComponent(c.trim());
+  api(url).then(function(data){if(!data)return;q('top-out').innerHTML=renderTable(data.rows,TOP_COLS);bindClicks(q('top-out'));});
+}
+function loadPosition(){
+  var sym=val('pos-sym').trim().toUpperCase();
+  if(!sym)return;
+  api('position/'+sym).then(function(data){
+    if(!data){ q('pos-context').innerHTML='<div class="empty">No data found.</div>'; q('pos-breakdown').innerHTML=''; return; }
+    if(data.error){ q('pos-context').innerHTML='<div class="empty neg">'+data.error+'</div>'; q('pos-breakdown').innerHTML=''; return; }
+    
+    q('pos-h').textContent='Data Context \u2014 '+sym;
+    var ctx=data.context;
+    var ss=data.share_structure;
+    var bd=data.breakdown;
+    
+    var ctxHtml='<div class="stat-row" style="margin-bottom:0.75rem; font-size:0.88rem; color:var(--text);">' +
+        '<span><strong>Tradable Float:</strong> ' + fmtInt(ss.public_shares) + ' (' + ss.public_ratio_pct + '%)</span> &middot; ' +
+        '<span><strong>Promoter Shares:</strong> ' + fmtInt(ss.promoter_shares) + '</span> &middot; ' +
+        '<span><strong>Float Turnover:</strong> ' + ss.float_turnover_pct + '%</span></div>';
+        
+    var rows=[
+      {label: 'Price', val: fmt(ctx.ltp) + ' ('+pct(ctx.price_change_pct)+')'},
+      {label: 'Day Range', val: fmt(ctx.day_low) + ' - ' + fmt(ctx.day_high) + ' (Rejection: ' + (ctx.upper_rejection*100).toFixed(0) + '%)'},
+      {label: 'Total Qty / RVOL', val: fmtInt(ctx.total_qty) + ' / ' + ctx.rvol + 'x'},
+      {label: 'Pressure Ratio', val: ctx.pressure_ratio + 'x'},
+      {label: 'Top 3 Buy/Sell %', val: ctx.top_3_buy_pct + '% / ' + ctx.top_3_sell_pct + '%'},
+      {label: 'Net Absorption Ratio', val: ctx.net_absorption_ratio + 'x'},
+      {label: 'Wash %', val: ctx.wash_pct + '%'}
+    ];
+    
+    var tHtml='<table class="meta"><tbody>';
+    for(var i=0;i<rows.length;i++) tHtml+='<tr><th>'+rows[i].label+'</th><td>'+rows[i].val+'</td></tr>';
+    tHtml+='</tbody></table>';
+    
+    q('pos-context').innerHTML=ctxHtml + tHtml;
+    
+    var vClass = 'neutral';
+    if(bd.verdict.indexOf('Strong Buy')!==-1) vClass='gainer';
+    else if(bd.verdict.indexOf('Buy')!==-1) vClass='stealth';
+    else if(bd.verdict.indexOf('Avoid')!==-1) vClass='loser';
+    
+    var bdHtml='<div class="concl"><div class="concl-head"><span class="badge '+vClass+'">'+bd.verdict+'</span></div>' +
+        '<ul><li><strong>Supply &amp; Price Action:</strong> '+bd.supply_price_action+'</li>' +
+        '<li><strong>Operator Intent:</strong> '+bd.operator_intent+'</li>' +
+        '<li><strong>Actionable Verdict:</strong> '+bd.verdict_detail+'</li></ul></div>';
+        
+    q('pos-breakdown').innerHTML=bdHtml;
+  });
+}
 var RECENT_COLS=[{key:'trade_date',label:'Date',desc:'Trading session date'},{key:'close_price',label:'Close',type:'num',desc:'Session closing price in NRS'},{key:'change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change %'},{key:'qty',label:'Qty',type:'int',desc:'Total shares traded that session'},{key:'turnover',label:'Turnover',type:'num',desc:'Total session turnover in NRS'},{key:'rank',label:'Rank',desc:'Turnover rank across all traded symbols that day (1 = most traded)'}];
 var BROKER_COLS=[{key:'broker_id',label:'Broker',type:'broker',desc:'NEPSE broker ID (click to inspect broker)'},{key:'net_1d',label:'Net 1D',type:'int',desc:'Net shares bought (+) or sold (-) on latest session'},{key:'net_5d',label:'Net 5D',type:'int',desc:'Net shares bought (+) or sold (-) over last 5 sessions'},{key:'net_22d',label:'Net 22D',type:'int',desc:'Net shares bought (+) or sold (-) over last 22 sessions (~1 month)'},{key:'net_66d',label:'Net 66D',type:'int',desc:'Net shares bought (+) or sold (-) over last 66 sessions (~1 quarter)'},{key:'buy_vwap',label:'Buy VWAP',type:'num',desc:'Volume-weighted average buy price over the lookback'},{key:'margin_pct',label:'Margin %',type:'pct',desc:'Unrealized profit/loss margin vs latest close price'}];
 var SIG_COLS=[{key:'trade_date',label:'Date',desc:'Trading session date'},{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},{key:'broker_id',label:'Broker',type:'broker',desc:'NEPSE broker ID (click to inspect)'},{key:'track',label:'Track',desc:'Screener track: TRACK_A (momentum) or TRACK_B (stealth accumulation)'},{key:'signal',label:'Signal',desc:'Signal classification triggered on this session'},{key:'turnover_rank',label:'Rank',desc:'Exchange-wide turnover rank on that session (1 = most traded)'},{key:'net_1d',label:'Net 1D',type:'int',desc:'Net shares bought (+) or sold (-) on that session'},{key:'net_5d',label:'Net 5D',type:'int',desc:'Net shares over 5 sessions up to that date'},{key:'net_22d',label:'Net 22D',type:'int',desc:'Net shares over 22 sessions up to that date'},{key:'net_66d',label:'Net 66D',type:'int',desc:'Net shares over 66 sessions up to that date'},{key:'margin_pct',label:'Margin %',type:'pct',desc:'Unrealized profit/loss margin vs that session close price'},{key:'t1_change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change %'}];
-function loadInspect(){var sym=val('insp-sym').trim().toUpperCase();if(!sym)return;api('inspect/'+sym+'?sessions='+(val('insp-sess')||22)).then(function(data){if(!data)return;q('recent-h').textContent='Daily History \u2014 '+sym;if(data.momentum){q('insp-mom-wrap').style.display='block';q('insp-mom').innerHTML=renderMomentumCard(data.momentum,5,22);bindClicks(q('insp-mom'));}else{q('insp-mom-wrap').style.display='none';}q('insp-recent').innerHTML=renderTable(data.recent,RECENT_COLS);q('insp-brokers').innerHTML=renderTable(data.brokers,BROKER_COLS);q('insp-signals').innerHTML=renderTable(data.signals,SIG_COLS);bindClicks(q('insp-recent'));bindClicks(q('insp-brokers'));bindClicks(q('insp-signals'));});}
+function loadInspect(){var sym=val('insp-sym').trim().toUpperCase();if(!sym)return;api('inspect/'+sym+'?sessions='+(val('insp-sess')||22)).then(function(data){if(!data)return;q('recent-h').textContent='Daily History \u2014 '+sym;if(data.sector||data.cap_tier||data.fifty_two_week_high!=null||data.vwap!=null){q('insp-meta-wrap').style.display='block';q('insp-meta').innerHTML=renderInspectMeta(data);}else{q('insp-meta-wrap').style.display='none';}if(data.momentum){q('insp-mom-wrap').style.display='block';q('insp-mom').innerHTML=renderMomentumCard(data.momentum,5,22);bindClicks(q('insp-mom'));}else{q('insp-mom-wrap').style.display='none';}q('insp-recent').innerHTML=renderTable(data.recent,RECENT_COLS);q('insp-brokers').innerHTML=renderTable(data.brokers,BROKER_COLS);q('insp-signals').innerHTML=renderTable(data.signals,SIG_COLS);bindClicks(q('insp-recent'));bindClicks(q('insp-brokers'));bindClicks(q('insp-signals'));});}
 var ANL_TIME_COLS=[{key:'trade_date',label:'Date',desc:'Trading session date'},{key:'rank',label:'Rank',desc:'Turnover rank that session; 1 = most traded on the whole exchange'},{key:'rank_pctile',label:'Rank %ile',type:'num',desc:'rank \u00f7 symbols traded that day; lower = busier'},{key:'close',label:'Close',type:'num',desc:'Session closing price'},{key:'change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change'},{key:'qty',label:'Qty',type:'int',desc:'Shares traded that session'},{key:'turnover',label:'Turnover',type:'num',desc:'NRS turnover that session'},{key:'top_accum_id',label:'Top Accum',type:'broker',desc:'Broker that net-bought the most that day (click to open the Broker tab)'},{key:'top_accum_net',label:'Top Net',type:'int',desc:"That broker's net buy in shares (buy \u2212 sell)"},{key:'net_breadth',label:'Breadth',type:'int',desc:'How many brokers were net buyers that session'},{key:'concentration',label:'Conc',type:'num',desc:"|top buyer's net| \u00f7 sum of all brokers' |nets|; low = no single dominant buyer"},{key:'sustained',label:'Sust',desc:'Is the top-accumulator broker the same as the previous session?'},{key:'signature',label:'Signature',desc:'Crowd type: MULTI = \u22653 net buyers \u00b7 SINGLE = 1 net buyer \u00b7 DISTRIBUTE = top netter sold \u00b7 NEUTRAL = unclear'},{key:'fwd_1',label:'T+1',type:'pct',desc:'Forward close-to-close return 1 session later'},{key:'fwd_3',label:'T+3',type:'pct',desc:'Forward close-to-close return 3 sessions later'}];
 var ANL_REL_COLS=[{key:'bucket',label:'Bucket',desc:"Turnover tier by rank %ile: LEADER = top 15%, MID = 15\u201350%, MINOR = the rest"},{key:'n',label:'N',type:'int',desc:'Number of sessions in the bucket'},{key:'t1_avg',label:'T+1 Avg %',type:'pct',desc:'Average close-to-close return 1 session later'},{key:'t1_win',label:'T+1 Win %',type:'pct',desc:'Share of sessions with a positive T+1 return'},{key:'t3_avg',label:'T+3 Avg %',type:'pct',desc:'Average close-to-close return 3 sessions later'},{key:'t3_win',label:'T+3 Win %',type:'pct',desc:'Share of sessions with a positive T+3 return'}];
 var ANL_SIG_COLS=[{key:'signature',label:'Signature',desc:'Crowd type: MULTI = \u22653 net buyers \u00b7 SINGLE = 1 \u00b7 DISTRIBUTE = top netter sold \u00b7 NEUTRAL = unclear'},{key:'n',label:'Sessions',type:'int',desc:'Number of sessions with this signature in the window'},{key:'t1_avg',label:'T+1 Avg %',type:'pct',desc:'Average close-to-close return 1 session later'},{key:'t1_win',label:'T+1 Win %',type:'pct',desc:'Share of sessions with a positive T+1 return'},{key:'t3_avg',label:'T+3 Avg %',type:'pct',desc:'Average close-to-close return 3 sessions later'},{key:'t3_win',label:'T+3 Win %',type:'pct',desc:'Share of sessions with a positive T+3 return'}];
@@ -493,9 +680,39 @@ function loadMomentum(){var sym=(val('mom-sym')||'').trim().toUpperCase();var s=
 var WASH_BROKER=[{key:'broker_id',label:'Broker',type:'broker',desc:'NEPSE broker ID (click to inspect)'},{key:'buy_qty',label:'Buy',type:'int',desc:'Total shares bought by this broker'},{key:'sell_qty',label:'Sell',type:'int',desc:'Total shares sold by this broker'},{key:'matched_qty',label:'Matched',type:'int',desc:'Quantity matched internally (min(buy, sell))'},{key:'gross_volume',label:'Gross',type:'int',desc:'Total volume (buy + sell)'},{key:'match_pct',label:'Match %',type:'pct',desc:'Internal cross percentage (matched \u00d7 2 \u00f7 gross)'}];
 var WASH_SESSION=[{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},{key:'total_qty',label:'Total Qty',type:'int',desc:'Total shares traded across the exchange in lookback'},{key:'crossed_qty',label:'Crossed',type:'int',desc:'Total internally matched shares across all brokers'},{key:'session_match_pct',label:'Match %',type:'pct',desc:'Percentage of exchange volume internally crossed'}];
 function loadWash(){api('wash?window='+(val('wash-wnd')||22)+'&min_qty='+(val('wash-mq')||5000)+'&as_of='+val('wash-asof')).then(function(data){if(!data)return;q('wash-broker').innerHTML=renderTable(data.broker,WASH_BROKER);q('wash-session').innerHTML=renderTable(data.session,WASH_SESSION);bindClicks(q('wash-broker'));bindClicks(q('wash-session'));});}
-var TRACK_A_COLS=[{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},{key:'signal',label:'Signal',desc:'Track A signal: MOMENTUM_ENTRY, TOP_BUYER_ABSORPTION, or RETAIL_DISTRIBUTION_TRAP'},{key:'close',label:'Close',type:'num',desc:'Session closing price in NRS'},{key:'net_t1',label:'Net T1',type:'int',desc:'Net shares bought (+) or sold (-) on latest session'},{key:'net_t5',label:'Net T5',type:'int',desc:'Net shares bought (+) or sold (-) over last 5 sessions'},{key:'net_t22',label:'Net T22',type:'int',desc:'Net shares bought (+) or sold (-) over last 22 sessions'},{key:'net_t66',label:'Net T66',type:'int',desc:'Net shares bought (+) or sold (-) over last 66 sessions'},{key:'margin_pct',label:'Margin %',type:'pct',desc:'Top buyer unrealized margin % vs current close'},{key:'t1_turnover',label:'T1 Turnover',type:'num',desc:'Latest session turnover in NRS'}];
-var TRACK_B_COLS=[{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},{key:'signal',label:'Signal',desc:'Track B signal: STEALTH_ACCUMULATION_BASE or EARLY_PIVOT_ACCUMULATION'},{key:'broker_id',label:'Broker',type:'broker',desc:'Primary accumulating broker ID (click to inspect)'},{key:'close',label:'Close',type:'num',desc:'Session closing price in NRS'},{key:'net_t22',label:'Net T22',type:'int',desc:'Net shares accumulated by broker over last 22 sessions'},{key:'absorption_pct',label:'Absorb %',type:'pct',desc:'Broker net buy as % of total market volume in 22 sessions'},{key:'t22_price_change_pct',label:'22D Δ%',type:'pct',desc:'Price change % over the 22-session accumulation window'},{key:'volume_inflection',label:'Vol Inflect',type:'num',desc:'5-day average volume ÷ 22-day average volume'},{key:'margin_pct',label:'Margin %',type:'pct',desc:'Broker unrealized profit/loss margin % vs current close'}];
-function loadRun(){api('run?top='+(val('run-top')||20)+'&as_of='+val('run-asof')+'&top_holder_window='+(val('run-holder')||22)).then(function(data){if(!data)return;q('run-a').innerHTML=renderTable(data.track_a,TRACK_A_COLS);q('run-b').innerHTML=renderTable(data.track_b,TRACK_B_COLS);bindClicks(q('run-a'));bindClicks(q('run-b'));});}
+var TRACK_A_COLS=[
+  {key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},
+  {key:'sector',label:'Sector',type:'sec',desc:'NEPSE industry classification'},
+  {key:'cap_tier',label:'Cap',type:'cap',desc:'Market cap tier: LARGE, MID, SMALL'},
+  {key:'signal',label:'Signal',desc:'Track A signal: MOMENTUM_ENTRY, TOP_BUYER_ABSORPTION, or RETAIL_DISTRIBUTION_TRAP'},
+  {key:'close',label:'Close',type:'num',desc:'Session closing price in NRS'},
+  {key:'net_t1',label:'Net T1',type:'int',desc:'Net shares bought (+) or sold (-) on latest session'},
+  {key:'net_t5',label:'Net T5',type:'int',desc:'Net shares bought (+) or sold (-) over last 5 sessions'},
+  {key:'net_t22',label:'Net T22',type:'int',desc:'Net shares bought (+) or sold (-) over last 22 sessions'},
+  {key:'net_t66',label:'Net T66',type:'int',desc:'Net shares bought (+) or sold (-) over last 66 sessions'},
+  {key:'margin_pct',label:'Margin %',type:'pct',desc:'Top buyer unrealized margin % vs current close'},
+  {key:'t1_turnover',label:'T1 Turnover',type:'num',desc:'Latest session turnover in NRS'}
+];
+var TRACK_B_COLS=[
+  {key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},
+  {key:'sector',label:'Sector',type:'sec',desc:'NEPSE industry classification'},
+  {key:'cap_tier',label:'Cap',type:'cap',desc:'Market cap tier: LARGE, MID, SMALL'},
+  {key:'signal',label:'Signal',desc:'Track B signal: STEALTH_ACCUMULATION_BASE or EARLY_PIVOT_ACCUMULATION'},
+  {key:'broker_id',label:'Broker',type:'broker',desc:'Primary accumulating broker ID (click to inspect)'},
+  {key:'close',label:'Close',type:'num',desc:'Session closing price in NRS'},
+  {key:'net_t22',label:'Net T22',type:'int',desc:'Net shares accumulated by broker over last 22 sessions'},
+  {key:'absorption_pct',label:'Absorb %',type:'pct',desc:'Broker net buy as % of total market volume in 22 sessions'},
+  {key:'dispersion_pct',label:'Dispers %',type:'pct',desc:'Selling dispersion across top 3 sellers'},
+  {key:'t22_price_change_pct',label:'22D Δ%',type:'pct',desc:'Price change % over the 22-session accumulation window'},
+  {key:'volume_inflection',label:'Vol Inflect',type:'num',desc:'5-day average volume ÷ 22-day average volume'},
+  {key:'margin_pct',label:'Margin %',type:'pct',desc:'Broker unrealized profit/loss margin % vs current close'}
+];
+function loadRun(){
+  var url='run?top='+(val('run-top')||20)+'&as_of='+val('run-asof')+'&top_holder_window='+(val('run-holder')||22);
+  if(val('run-sector'))url+='&sector='+encodeURIComponent(val('run-sector').trim());
+  if(val('run-cap'))url+='&cap_tier='+encodeURIComponent(val('run-cap').trim());
+  api(url).then(function(data){if(!data)return;q('run-a').innerHTML=renderTable(data.track_a,TRACK_A_COLS);q('run-b').innerHTML=renderTable(data.track_b,TRACK_B_COLS);bindClicks(q('run-a'));bindClicks(q('run-b'));});
+}
 function loadSignals(){var p=[];if(val('sig-sym'))p.push('symbol='+encodeURIComponent(val('sig-sym').trim().toUpperCase()));if(val('sig-broker'))p.push('broker='+val('sig-broker'));if(val('sig-signal'))p.push('signal='+encodeURIComponent(val('sig-signal')));if(val('sig-track'))p.push('track='+encodeURIComponent(val('sig-track')));if(val('sig-streak'))p.push('streak='+val('sig-streak'));p.push('limit='+(val('sig-limit')||100));api('signals?'+p.join('&')).then(function(data){if(!data)return;if(val('sig-streak'))q('sig-out').innerHTML=renderTable(data.streaks,SIG_COLS);else q('sig-out').innerHTML=renderTable(data.rows,SIG_COLS);bindClicks(q('sig-out'));});}
 var WL_COLS=[{key:'symbol',label:'Symbol',type:'wsym',desc:'Watchlist symbol (click to view details)'},{key:'status',label:'Status',desc:'Watchlist status: WATCHING, STALKING, ENTERED, EXITED, ARCHIVED'},{key:'close_price',label:'Price',type:'num',desc:'Latest session closing price in NRS'},{key:'price_change_pct',label:'Chg %',type:'pct',desc:'Latest session price change %'},{key:'turnover_rank',label:'Rank',desc:'Latest session turnover rank (1 = most traded)'},{key:'entry_price',label:'Entry',type:'num',desc:'Planned or executed entry price'},{key:'target_price',label:'Target',type:'num',desc:'Price target in NRS'},{key:'stop_price',label:'Stop',type:'num',desc:'Stop loss price in NRS'},{key:'outcome',label:'Outcome',desc:'Recorded trade outcome: WIN, LOSS, SCRATCH, EXPIRED'},{key:'added_date',label:'Added',desc:'Date symbol was added to watchlist'},{key:'updated_date',label:'Updated',desc:'Date of last status or note update'}];
 var WL_NOTE_COLS=[{key:'note_date',label:'Date'},{key:'note',label:'Note'}];
@@ -603,4 +820,7 @@ def index_html() -> str:
 def regenerate_index() -> None:
     """Write reports/index.html from the current snapshots."""
     REPORTS_DIR.mkdir(exist_ok=True)
-    (REPORTS_DIR / "index.html").write_text(index_html())
+    try:
+        (REPORTS_DIR / "index.html").write_text(index_html())
+    except Exception:
+        pass

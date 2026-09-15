@@ -168,6 +168,141 @@ def _assign_brokers(sym: str, t_from_end: int, rng: random.Random) -> tuple[int,
 
 
 
+SECTOR_MAP = {
+    "LEC": "Hydro Power",
+    "HIDCL": "Investment",
+    "NABIL": "Commercial Banks",
+    "NICA": "Commercial Banks",
+    "GBIME": "Commercial Banks",
+    "EBL": "Commercial Banks",
+    "NMB": "Commercial Banks",
+    "SBL": "Commercial Banks",
+    "SANIMA": "Commercial Banks",
+    "PRVU": "Commercial Banks",
+    "NLIC": "Life Insurance",
+    "LICN": "Life Insurance",
+    "NIFRA": "Investment",
+    "UPPER": "Hydro Power",
+    "CHCL": "Hydro Power",
+    "SHIVM": "Manufacturing And Processing",
+    "DCL": "Finance",
+    "API": "Hydro Power",
+    "AKPL": "Hydro Power",
+    "BPCL": "Hydro Power",
+    "AHPC": "Hydro Power",
+    "HURJA": "Hydro Power",
+    "RHPL": "Hydro Power",
+    "UNL": "Manufacturing And Processing",
+    "BNT": "Manufacturing And Processing",
+    "NLO": "Hotels And Tourism",
+    "SHL": "Hotels And Tourism",
+    "OHL": "Hotels And Tourism",
+    "TRH": "Hotels And Tourism",
+    "CGH": "Hotels And Tourism",
+}
+
+MARKET_CAP_MAP = {
+    "LEC": 4500.0,
+    "HIDCL": 42000.0,
+    "NABIL": 145000.0,
+    "NICA": 62000.0,
+    "GBIME": 75000.0,
+    "EBL": 68000.0,
+    "NMB": 45000.0,
+    "SBL": 36000.0,
+    "SANIMA": 41000.0,
+    "PRVU": 38000.0,
+    "NLIC": 39000.0,
+    "LICN": 18500.0,
+    "NIFRA": 32000.0,
+    "UPPER": 36500.0,
+    "CHCL": 15200.0,
+    "SHIVM": 28000.0,
+    "DCL": 3200.0,
+    "API": 14800.0,
+    "AKPL": 7200.0,
+    "BPCL": 11500.0,
+    "AHPC": 6400.0,
+    "HURJA": 2800.0,
+    "RHPL": 4100.0,
+    "UNL": 17200.0,
+    "BNT": 16800.0,
+    "NLO": 3800.0,
+    "SHL": 12400.0,
+    "OHL": 14100.0,
+    "TRH": 19500.0,
+    "CGH": 8600.0,
+}
+
+COMPANY_NAMES = {
+    "LEC": "Liberty Energy Company Limited",
+    "HIDCL": "Hydroelectricity Investment and Development Company Ltd",
+    "NABIL": "Nabil Bank Limited",
+    "NICA": "NIC Asia Bank Limited",
+    "GBIME": "Global IME Bank Limited",
+    "EBL": "Everest Bank Limited",
+    "NMB": "NMB Bank Limited",
+    "SBL": "Siddhartha Bank Limited",
+    "SANIMA": "Sanima Bank Limited",
+    "PRVU": "Prabhu Bank Limited",
+    "NLIC": "Nepal Life Insurance Co. Ltd.",
+    "LICN": "Life Insurance Co. Nepal",
+    "NIFRA": "Nepal Infrastructure Bank Limited",
+    "UPPER": "Upper Tamakoshi Hydropower Ltd",
+    "CHCL": "Chilime Hydro power Company Limited",
+    "SHIVM": "Shivam Cements Ltd",
+    "DCL": "Deprosc Laghubitta Bittiya Sanstha Limited",
+    "API": "Api Power Company Ltd.",
+    "AKPL": "Arun Valley Hydropower Development Co. Ltd.",
+    "BPCL": "Butwal Power Company Limited",
+    "AHPC": "Arun Kabeli Power Ltd.",
+    "HURJA": "Himalaya Urja Bikas Company Limited",
+    "RHPL": "RASUWA GADHI HYDROPOWER COMPANY LIMITED",
+    "UNL": "Unilever Nepal Limited",
+    "BNT": "Bottlers Nepal (Terai) Limited",
+    "NLO": "Nepal Lube Oil Limited",
+    "SHL": "Soaltee Hotel Limited",
+    "OHL": "Oriental Hotels Limited",
+    "TRH": "Taragaon Regency Hotel",
+    "CGH": "Chandragiri Hills Limited",
+}
+
+
+def seed_securities_meta(conn) -> None:
+    """Populate static securities metadata table."""
+    import psycopg2.extras
+
+    rows = []
+    for sym in SYMBOLS:
+        base = BASE_PRICES.get(sym, 100.0)
+        rows.append(
+            (
+                sym,
+                COMPANY_NAMES.get(sym, f"{sym} Limited"),
+                SECTOR_MAP.get(sym, "Others"),
+                "Equity",
+                MARKET_CAP_MAP.get(sym, 10000.0),
+                round(base * 1.35, 2),
+                round(base * 0.72, 2),
+            )
+        )
+    sql = """
+        INSERT INTO securities_meta
+            (symbol, company_name, sector, instrument_type, market_cap, fifty_two_week_high, fifty_two_week_low)
+        VALUES %s
+        ON CONFLICT (symbol) DO UPDATE SET
+            company_name = EXCLUDED.company_name,
+            sector = EXCLUDED.sector,
+            instrument_type = EXCLUDED.instrument_type,
+            market_cap = EXCLUDED.market_cap,
+            fifty_two_week_high = EXCLUDED.fifty_two_week_high,
+            fifty_two_week_low = EXCLUDED.fifty_two_week_low,
+            updated_at = CURRENT_TIMESTAMP
+    """
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(cur, sql, rows)
+
+
 def generate_floorsheet(n_days: int = N_DAYS, seed: int = RNG_SEED) -> pl.DataFrame:
     rng = random.Random(seed)
     days = trading_calendar(n_days)
@@ -181,6 +316,14 @@ def generate_floorsheet(n_days: int = N_DAYS, seed: int = RNG_SEED) -> pl.DataFr
 
 
 def seed_database(n_days: int = N_DAYS, seed: int = RNG_SEED) -> dict[str, int]:
+    from src.db import get_conn
+    conn = get_conn()
+    try:
+        seed_securities_meta(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
     df = generate_floorsheet(n_days=n_days, seed=seed)
     stats = ingest_floorsheet(df, replace_dates=True)
     stats["days"] = n_days

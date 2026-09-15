@@ -167,7 +167,7 @@ Indexes: `(symbol, trade_date)`, `(buyer_broker, trade_date)`,
 `PRIMARY KEY (trade_date, symbol, broker_id)`.
 Indexes: `(symbol, trade_date)`, `(broker_id, trade_date)`.
 
-### 4.3 `daily_market_summary` — daily stock-level close/turnover/rank
+### 4.3 `daily_market_summary` — daily stock-level close/turnover/rank & fundamental metrics
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -178,11 +178,30 @@ Indexes: `(symbol, trade_date)`, `(broker_id, trade_date)`.
 | `total_qty` | `BIGINT` | session volume |
 | `total_turnover` | `NUMERIC(18,2)` | session `Σ amount` |
 | `turnover_rank` | `INT` | rank by turnover within the session (1 = highest) |
+| `sector` | `VARCHAR(50)` | NEPSE industry sector (e.g. Commercial Banks, Hydro Power) |
+| `market_cap` | `NUMERIC(16,2)` | Market capitalization in Million NPR |
+| `fifty_two_week_high` | `NUMERIC(10,2)` | 52-week price ceiling |
+| `fifty_two_week_low` | `NUMERIC(10,2)` | 52-week price floor |
+| `vwap` | `NUMERIC(10,2)` | Intraday Volume Weighted Average Price (`total_turnover / total_qty`) |
 
-`PRIMARY KEY (trade_date, symbol)`; index `(trade_date, turnover_rank)`.
+`PRIMARY KEY (trade_date, symbol)`; indexes `(trade_date, turnover_rank)`, `(sector, trade_date)`.
 This table also defines the **trading-session calendar** (via `SELECT DISTINCT
 trade_date`) used for window offsets and streak continuity.
-### 4.4 `screener_signals_history` — persisted screening outputs for streaks/backtest
+
+### 4.4 `securities_meta` — company security master & sector metadata
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `symbol` | `VARCHAR(20)` | `PRIMARY KEY` |
+| `company_name` | `VARCHAR(120)` | Full company title |
+| `sector` | `VARCHAR(50)` | NEPSE sector classification |
+| `instrument_type` | `VARCHAR(30)` | Instrument type (e.g. Equity) |
+| `market_cap` | `NUMERIC(16,2)` | Market capitalization (Million NPR) |
+| `fifty_two_week_high` | `NUMERIC(10,2)` | 52-week high |
+| `fifty_two_week_low` | `NUMERIC(10,2)` | 52-week low |
+| `updated_at` | `TIMESTAMP` | Auto-updated on metadata sync |
+
+### 4.5 `screener_signals_history` — persisted screening outputs for streaks/backtest
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -340,6 +359,7 @@ All per-broker metrics over each window via `aggregate_window()`:
   configurable per run and **defaulting to the top 20** symbols by T_1 turnover
   (set via the CLI `--top N` flag; the table title and header reflect the
   active threshold, e.g. `Track A — Top 20 Turnover Momentum & Traps`).
+- **Sector & Market-Cap Tier filtering:** filter scans directly by sector (e.g. `--sector "Commercial Banks"`) or cap size tier (e.g. `--cap-tier LARGE|MID|SMALL`).
 - **Instrument exclusions:** promoter stocks and debentures are dropped from the
   candidate universe before ranking. A promoter is any ticker ending in `P`
   (e.g. `LECP`, `NABILP`) **except** `HIDCLP` and `HEIP`, which are kept.

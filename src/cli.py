@@ -76,6 +76,8 @@ def render_track_a(rows: list[dict], top_turnover: int = 20, top_holder_window: 
     for col, justify in [
         ("Rank", "right"),
         ("Symbol", "left"),
+        ("Sector", "left"),
+        ("Cap", "center"),
         ("Broker", "right"),
         ("Net 1D", "right"),
         ("Net 5D", "right"),
@@ -117,6 +119,8 @@ def render_track_a(rows: list[dict], top_turnover: int = 20, top_holder_window: 
         table.add_row(
             str(r["turnover_rank"]),
             r["symbol"],
+            r.get("sector") or "-",
+            r.get("cap_tier") or "-",
             str(r["broker_id"]),
             _fmt_num(r["net_t1"]),
             _fmt_num(r["net_t5"]),
@@ -139,6 +143,8 @@ def render_track_b(rows: list[dict]) -> Table:
     )
     for col, justify in [
         ("Symbol", "left"),
+        ("Sector", "left"),
+        ("Cap", "center"),
         ("Broker", "right"),
         ("Net 22D", "right"),
         ("Absorption %", "right"),
@@ -151,12 +157,14 @@ def render_track_b(rows: list[dict]) -> Table:
         table.add_column(col, justify=justify)
 
     if not rows:
-        table.add_row("-", "-", "-", "-", "-", "-", "-", "-", Text("none", style="dim"))
+        table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-", "-", Text("none", style="dim"))
         return table
 
     for r in rows:
         table.add_row(
             r["symbol"],
+            r.get("sector") or "-",
+            r.get("cap_tier") or "-",
             str(r["broker_id"]),
             _fmt_num(r["net_t22"]),
             _fmt_pct(r["absorption_pct"]),
@@ -177,18 +185,31 @@ def cmd_run(args: argparse.Namespace) -> int:
         except ValueError:
             console.print(f"[red]Invalid --as-of date: {args.as_of!r} (expected YYYY-MM-DD)[/red]")
             return 2
+    sector = getattr(args, "sector", None)
+    cap_tier = getattr(args, "cap_tier", None)
+    if cap_tier:
+        cap_tier = cap_tier.upper()
     t0 = perf_counter()
     track_a, track_b, meta = run_screener(
-        as_of=as_of, persist=not args.no_persist, top_turnover=args.top,
-        top_holder_window=args.top_holder_window
+        as_of=as_of,
+        persist=not args.no_persist,
+        top_turnover=args.top,
+        top_holder_window=args.top_holder_window,
+        sector=sector,
+        cap_tier=cap_tier,
     )
     elapsed = perf_counter() - t0
     mode = f"  as_of={meta['as_of']}" if meta.get("as_of") else ""
     persist_info = f"  persisted={meta['persisted']} signals" if meta.get("persisted") else "  (not persisted)"
     top_info = f"  top={meta['top_turnover']}"
+    filter_info = ""
+    if sector:
+        filter_info += f"  sector={sector}"
+    if cap_tier:
+        filter_info += f"  cap_tier={cap_tier}"
     header = (
         f"NEPSE Institutional Accumulation Screener\n"
-        f"Sessions={meta['sessions']}  T1={meta['t1']}{mode}{top_info}{persist_info}  "
+        f"Sessions={meta['sessions']}  T1={meta['t1']}{mode}{top_info}{filter_info}{persist_info}  "
         f"elapsed={elapsed:.2f}s"
     )
     console.print(Panel(header, style="bold blue"))
@@ -793,6 +814,44 @@ def render_inspect(data: dict) -> None:
         console.print("[yellow]No market data for this symbol[/yellow]")
         return
 
+    sec = data.get("sector")
+    cap = data.get("cap_tier")
+    mcap = data.get("market_cap")
+    h52 = data.get("fifty_two_week_high")
+    l52 = data.get("fifty_two_week_low")
+    vwap = data.get("vwap")
+    dist_h = data.get("distance_52w_high_pct")
+    dist_l = data.get("distance_52w_low_pct")
+    range_p = data.get("range_52w_pct")
+
+    meta_parts = []
+    if sec:
+        meta_parts.append(f"[bold]Sector:[/bold] [bold cyan]{sec}[/bold cyan]")
+    if cap and cap != "UNKNOWN":
+        cap_str = f"[bold green]{cap}[/bold green]"
+        if mcap is not None:
+            cap_str += f" ({mcap:,.1f}M NPR)"
+        meta_parts.append(f"[bold]Cap Tier:[/bold] {cap_str}")
+    if h52 is not None and l52 is not None:
+        range_str = f"L: {l52:,.2f} \u2192 H: {h52:,.2f}"
+        if dist_h is not None and dist_l is not None:
+            range_str += f" ({dist_h:+.1f}% to H, {dist_l:+.1f}% to L)"
+        if range_p is not None:
+            range_str += f" [dim][{range_p:.1f}% of 52W range][/dim]"
+        meta_parts.append(f"[bold]52-Week Range:[/bold] {range_str}")
+    if vwap is not None:
+        meta_parts.append(f"[bold]Session VWAP:[/bold] {vwap:,.2f}")
+
+    if meta_parts:
+        console.print(
+            Panel(
+                "  |  ".join(meta_parts),
+                title="Fundamental & Technical Profile",
+                border_style="bold cyan",
+            )
+        )
+        console.print()
+
     mom = data.get("momentum")
     if mom:
         m_style = MOMENTUM_STYLE.get(mom.get("status"), "white")
@@ -1349,6 +1408,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=22,
         help="Window that defines the Top Holder (default: 22)",
     )
+    p_run.add_argument(
+        "--sector",
+        type=str,
+        default=None,
+        help="Filter by sector name (e.g. 'Hydro Power', 'Commercial Banks')",
+    )
+    p_run.add_argument(
+        "--cap-tier",
+        type=str,
+        default=None,
+        help="Filter by market cap tier (LARGE, MID, SMALL)",
+    )
     p_run.set_defaults(func=cmd_run)
 
     p_seed = sub.add_parser("seed", help="Generate and load synthetic floorsheet data")
@@ -1483,6 +1554,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_top.add_argument(
         "--limit", type=int, default=20, help="Number of top rows (default: 20)"
     )
+    p_top.add_argument(
+        "--sector",
+        type=str,
+        default=None,
+        help="Filter by sector name (e.g. 'Hydro Power', 'Commercial Banks')",
+    )
+    p_top.add_argument(
+        "--cap-tier",
+        type=str,
+        default=None,
+        help="Filter by market cap tier (LARGE, MID, SMALL)",
+    )
     p_top.set_defaults(func=cmd_top)
 
     p_serve = sub.add_parser(
@@ -1515,7 +1598,10 @@ def render_top(data: dict, reused: bool = False) -> None:
     for col, justify in [
         ("Rank", "right"),
         ("Symbol", "left"),
+        ("Sector", "left"),
+        ("Cap", "center"),
         ("Close", "right"),
+        ("VWAP", "right"),
         ("\u0394%", "right"),
         ("Qty", "right"),
         ("Turnover", "right"),
@@ -1525,7 +1611,10 @@ def render_top(data: dict, reused: bool = False) -> None:
         table.add_row(
             str(r["rank"]),
             r["symbol"],
+            r.get("sector") or "-",
+            r.get("cap_tier") or "-",
             _fmt_num(r["close"], 2),
+            _fmt_num(r.get("vwap"), 2),
             _fmt_pct(r["change_pct"]),
             _fmt_num(r["qty"]),
             _fmt_num(r["turnover"]),
@@ -1542,7 +1631,16 @@ def cmd_top(args: argparse.Namespace) -> int:
         except ValueError:
             console.print(f"[red]Invalid --as-of date: {args.as_of!r} (expected YYYY-MM-DD)[/red]")
             return 2
-    params = {"as_of": as_of.isoformat() if as_of else None, "limit": args.limit}
+    sector = getattr(args, "sector", None)
+    cap_tier = getattr(args, "cap_tier", None)
+    if cap_tier:
+        cap_tier = cap_tier.upper()
+    params = {
+        "as_of": as_of.isoformat() if as_of else None,
+        "limit": args.limit,
+        "sector": sector,
+        "cap_tier": cap_tier,
+    }
     conn = get_conn()
     try:
         cached = reports.load_snapshot("top", params)
@@ -1550,7 +1648,7 @@ def cmd_top(args: argparse.Namespace) -> int:
             data = cached
             reused = True
         else:
-            data = load_top_turnover(conn, as_of=as_of, limit=args.limit)
+            data = load_top_turnover(conn, as_of=as_of, limit=args.limit, sector=sector, cap_tier=cap_tier)
             reports.save_snapshot("top", params, data)
             reused = False
     finally:

@@ -243,6 +243,118 @@ def fetch_today() -> Path | None:
     return path
 
 
+def fetch_and_sync_securities_metadata() -> int:
+    """Fetch live security master and market caps from NEPSE and sync to DB."""
+    try:
+        from src.db import get_conn
+        scraper = NepseScraper(verify_ssl=False)
+
+        # 1. Fetch authoritative security master with sector mappings
+        sec_map: dict[str, dict] = {}
+        try:
+            all_sec = scraper.get_all_securities()
+            all_list = all_sec.json() if hasattr(all_sec, "status_code") else all_sec
+            if isinstance(all_list, list):
+                for item in all_list:
+                    sym = (item.get("symbol") or "").strip().upper()
+                    if sym:
+                        sec_map[sym] = {
+                            "company_name": item.get("companyName") or item.get("securityName"),
+                            "sector": item.get("sectorName") or item.get("sector"),
+                            "instrument_type": item.get("instrumentType") or "Equity",
+                        }
+        except Exception as e:
+            print(f"Warning: could not fetch get_all_securities: {e}")
+
+        # 2. Fetch live market caps and 52-week ranges
+        price_map: dict[str, dict] = {}
+        try:
+            today_data = scraper.get_today_price()
+            price_list = today_data.json() if hasattr(today_data, "status_code") else today_data
+            if isinstance(price_list, list):
+                for item in price_list:
+                    sym = (item.get("symbol") or "").strip().upper()
+                    if sym:
+                        price_map[sym] = {
+                            "company_name": item.get("securityName") or item.get("companyName"),
+                            "sector": item.get("sectorName") or item.get("sector"),
+                            "market_cap": item.get("marketCapitalization"),
+                            "fifty_two_week_high": item.get("fiftyTwoWeekHigh"),
+                            "fifty_two_week_low": item.get("fiftyTwoWeekLow"),
+                        }
+        except Exception as e:
+            print(f"Warning: could not fetch get_today_price: {e}")
+
+        # 3. Merge all known symbols
+        all_symbols = sorted(set(sec_map.keys()) | set(price_map.keys()))
+        if not all_symbols:
+            return 0
+
+        rows = []
+        for sym in all_symbols:
+            s_info = sec_map.get(sym, {})
+            p_info = price_map.get(sym, {})
+
+            name = s_info.get("company_name") or p_info.get("company_name")
+            sector = s_info.get("sector") or p_info.get("sector")
+            itype = s_info.get("instrument_type") or "Equity"
+            mcap = p_info.get("market_cap")
+            h52 = p_info.get("fifty_two_week_high")
+            l52 = p_info.get("fifty_two_week_low")
+
+            rows.append(
+                (
+                    sym,
+                    name.strip() if name else None,
+                    sector.strip() if sector else None,
+                    itype.strip() if itype else "Equity",
+                    float(mcap) if mcap is not None else None,
+                    float(h52) if h52 is not None else None,
+                    float(l52) if l52 is not None else None,
+                )
+            )
+
+        if not rows:
+            return 0
+
+        conn = get_conn()
+        try:
+            import psycopg2.extras
+            sql = """
+                INSERT INTO securities_meta
+                    (symbol, company_name, sector, instrument_type, market_cap, fifty_two_week_high, fifty_two_week_low)
+                VALUES %s
+                ON CONFLICT (symbol) DO UPDATE SET
+                    company_name = COALESCE(EXCLUDED.company_name, securities_meta.company_name),
+                    sector = COALESCE(EXCLUDED.sector, securities_meta.sector),
+                    instrument_type = COALESCE(EXCLUDED.instrument_type, securities_meta.instrument_type),
+                    market_cap = COALESCE(EXCLUDED.market_cap, securities_meta.market_cap),
+                    fifty_two_week_high = COALESCE(EXCLUDED.fifty_two_week_high, securities_meta.fifty_two_week_high),
+                    fifty_two_week_low = COALESCE(EXCLUDED.fifty_two_week_low, securities_meta.fifty_two_week_low),
+                    updated_at = CURRENT_TIMESTAMP
+            """
+            with conn.cursor() as cur:
+                psycopg2.extras.execute_values(cur, sql, rows)
+                # Backfill historical daily_market_summary rows missing sector / market cap
+                cur.execute("""
+                    UPDATE daily_market_summary s
+                    SET sector = COALESCE(s.sector, m.sector),
+                        market_cap = COALESCE(s.market_cap, m.market_cap),
+                        fifty_two_week_high = COALESCE(s.fifty_two_week_high, m.fifty_two_week_high),
+                        fifty_two_week_low = COALESCE(s.fifty_two_week_low, m.fifty_two_week_low)
+                    FROM securities_meta m
+                    WHERE s.symbol = m.symbol
+                      AND (s.sector IS NULL OR s.market_cap IS NULL OR s.fifty_two_week_high IS NULL);
+                """)
+            conn.commit()
+            return len(rows)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Warning: could not sync securities metadata: {e}")
+        return 0
+
+
 def main() -> int:
     import argparse
 

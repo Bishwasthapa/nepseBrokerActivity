@@ -74,17 +74,88 @@ def load_rollup(conn, dates: list[date]) -> pl.DataFrame:
     )
 
 
+def classify_cap_tier(market_cap: float | None) -> str:
+    """Classify market cap into LARGE, MID, or SMALL tier.
+
+    market_cap is in million NPR (e.g. 145000 = 145B NPR, 3304 = 3.3B NPR).
+    - LARGE: >= 20,000M (>= 20 Billion NPR)
+    - MID: 5,000M to 20,000M (5B - 20B NPR)
+    - SMALL: < 5,000M (< 5 Billion NPR)
+    """
+    if market_cap is None:
+        return "UNKNOWN"
+    try:
+        val = float(market_cap)
+    except (ValueError, TypeError):
+        return "UNKNOWN"
+    if val >= 20000.0:
+        return "LARGE"
+    if val >= 5000.0:
+        return "MID"
+    return "SMALL"
+
+
 def load_summary(conn, dates: list[date]) -> pl.DataFrame:
-    return _load_frame(
-        conn,
-        """
-        SELECT trade_date, symbol, close_price, price_change_pct,
-               total_qty, total_turnover, turnover_rank
-        FROM daily_market_summary
-        WHERE trade_date = ANY(%s)
-        """,
-        (dates,),
-    )
+    try:
+        df = _load_frame(
+            conn,
+            """
+            SELECT s.trade_date, s.symbol, s.close_price, s.price_change_pct,
+                   s.total_qty, s.total_turnover, s.turnover_rank,
+                   COALESCE(s.sector, m.sector) AS sector,
+                   COALESCE(s.market_cap, m.market_cap) AS market_cap,
+                   COALESCE(s.fifty_two_week_high, m.fifty_two_week_high) AS fifty_two_week_high,
+                   COALESCE(s.fifty_two_week_low, m.fifty_two_week_low) AS fifty_two_week_low,
+                   s.vwap
+            FROM daily_market_summary s
+            LEFT JOIN securities_meta m ON s.symbol = m.symbol
+            WHERE s.trade_date = ANY(%s)
+            """,
+            (dates,),
+        )
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        try:
+            df = _load_frame(
+                conn,
+                """
+                SELECT trade_date, symbol, close_price, price_change_pct,
+                       total_qty, total_turnover, turnover_rank,
+                       sector, market_cap, fifty_two_week_high, fifty_two_week_low, vwap
+                FROM daily_market_summary
+                WHERE trade_date = ANY(%s)
+                """,
+                (dates,),
+            )
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            df = _load_frame(
+                conn,
+                """
+                SELECT trade_date, symbol, close_price, price_change_pct,
+                       total_qty, total_turnover, turnover_rank
+                FROM daily_market_summary
+                WHERE trade_date = ANY(%s)
+                """,
+                (dates,),
+            )
+    expected = {
+        "sector": pl.Utf8,
+        "market_cap": pl.Float64,
+        "fifty_two_week_high": pl.Float64,
+        "fifty_two_week_low": pl.Float64,
+        "vwap": pl.Float64,
+    }
+    for col, dtype in expected.items():
+        if col not in df.columns:
+            df = df.with_columns(pl.lit(None, dtype=dtype).alias(col))
+    return df
 
 
 def _ensure_matched(rollup: pl.DataFrame) -> pl.DataFrame:
@@ -575,6 +646,8 @@ def screen_track_a(
     windows: dict[str, list[date]],
     top_turnover: int = 20,
     top_holder_window: int = 22,
+    sector: str | None = None,
+    cap_tier: str | None = None,
 ) -> list[dict]:
     t1 = windows["T_1"]
     if not t1:
@@ -596,10 +669,38 @@ def screen_track_a(
         r["symbol"]: float(r["price_change_pct"] or 0.0)
         for r in t1_sum.iter_rows(named=True)
     }
+    t1_sectors = {
+        r["symbol"]: r.get("sector")
+        for r in t1_sum.iter_rows(named=True)
+    }
+    t1_caps = {
+        r["symbol"]: float(r["market_cap"]) if r.get("market_cap") is not None else None
+        for r in t1_sum.iter_rows(named=True)
+    }
+    t1_52w_high = {
+        r["symbol"]: float(r["fifty_two_week_high"]) if r.get("fifty_two_week_high") is not None else None
+        for r in t1_sum.iter_rows(named=True)
+    }
+    t1_52w_low = {
+        r["symbol"]: float(r["fifty_two_week_low"]) if r.get("fifty_two_week_low") is not None else None
+        for r in t1_sum.iter_rows(named=True)
+    }
+    t1_vwap = {
+        r["symbol"]: float(r["vwap"]) if r.get("vwap") is not None else None
+        for r in t1_sum.iter_rows(named=True)
+    }
 
     results: list[dict] = []
     for row in top_universe.iter_rows(named=True):
         sym = row["symbol"]
+        sec = t1_sectors.get(sym)
+        mcap = t1_caps.get(sym)
+        tier = classify_cap_tier(mcap)
+        if sector and (not sec or sector.strip().lower() not in sec.strip().lower()):
+            continue
+        if cap_tier and tier.upper() != cap_tier.strip().upper():
+            continue
+
         t1_agg = aggs["T_1"]
         if t1_agg.is_empty():
             continue
@@ -632,6 +733,12 @@ def screen_track_a(
             )
             return {
                 "symbol": sym,
+                "sector": sec,
+                "market_cap": mcap,
+                "cap_tier": tier,
+                "fifty_two_week_high": t1_52w_high.get(sym),
+                "fifty_two_week_low": t1_52w_low.get(sym),
+                "session_vwap": t1_vwap.get(sym),
                 "turnover_rank": int(row["turnover_rank"]),
                 "t1_turnover": float(row["total_turnover"]),
                 "broker_id": bid,
@@ -695,6 +802,8 @@ def screen_track_b(
     rollup: pl.DataFrame,
     summary: pl.DataFrame,
     windows: dict[str, list[date]],
+    sector: str | None = None,
+    cap_tier: str | None = None,
 ) -> list[dict]:
     t1, t22 = windows["T_1"], windows["T_22"]
     if not t1 or not t22:
@@ -705,6 +814,27 @@ def screen_track_b(
     t22_tot = stock_window_totals(summary, t22)
     if t22_agg.is_empty() or t22_tot.is_empty() or t1_sum.is_empty():
         return []
+
+    t1_sectors = {
+        r["symbol"]: r.get("sector")
+        for r in t1_sum.iter_rows(named=True)
+    }
+    t1_caps = {
+        r["symbol"]: float(r["market_cap"]) if r.get("market_cap") is not None else None
+        for r in t1_sum.iter_rows(named=True)
+    }
+    t1_52w_high = {
+        r["symbol"]: float(r["fifty_two_week_high"]) if r.get("fifty_two_week_high") is not None else None
+        for r in t1_sum.iter_rows(named=True)
+    }
+    t1_52w_low = {
+        r["symbol"]: float(r["fifty_two_week_low"]) if r.get("fifty_two_week_low") is not None else None
+        for r in t1_sum.iter_rows(named=True)
+    }
+    t1_vwap = {
+        r["symbol"]: float(r["vwap"]) if r.get("vwap") is not None else None
+        for r in t1_sum.iter_rows(named=True)
+    }
 
     t22_raw = rollup.filter(pl.col("trade_date").is_in(t22))
     sell_share = t22_raw.group_by(["symbol", "broker_id"]).agg(
@@ -734,6 +864,14 @@ def screen_track_b(
     results: list[dict] = []
     symbols = [s for s in t22_tot["symbol"].to_list() if not _is_excluded(s)]
     for sym in symbols:
+        sec = t1_sectors.get(sym)
+        mcap = t1_caps.get(sym)
+        tier = classify_cap_tier(mcap)
+        if sector and (not sec or sector.strip().lower() not in sec.strip().lower()):
+            continue
+        if cap_tier and tier.upper() != cap_tier.strip().upper():
+            continue
+
         tot = t22_tot.filter(pl.col("symbol") == sym)
         if tot.height == 0:
             continue
@@ -769,6 +907,12 @@ def screen_track_b(
         results.append(
             {
                 "symbol": sym,
+                "sector": sec,
+                "market_cap": mcap,
+                "cap_tier": tier,
+                "fifty_two_week_high": t1_52w_high.get(sym),
+                "fifty_two_week_low": t1_52w_low.get(sym),
+                "session_vwap": t1_vwap.get(sym),
                 "broker_id": int(top["broker_id"]),
                 "net_t22": net,
                 "absorption_pct": absorption,
@@ -792,6 +936,8 @@ def run_screener(
     persist: bool = True,
     top_turnover: int = 20,
     top_holder_window: int = 22,
+    sector: str | None = None,
+    cap_tier: str | None = None,
 ) -> tuple[list[dict], list[dict], dict]:
     """Run both tracks. If ``as_of`` is given, restrict to sessions <= that date
     (point-in-time backtest) and treat its last session as the T_1 date. When
@@ -825,12 +971,14 @@ def run_screener(
                 pl.col("total_turnover").cast(pl.Float64),
                 pl.col("turnover_rank").cast(pl.Int32),
             )
-        track_a = screen_track_a(rollup, summary, windows, top_turnover, top_holder_window)
-        track_b = screen_track_b(rollup, summary, windows)
+        track_a = screen_track_a(
+            rollup, summary, windows, top_turnover, top_holder_window, sector=sector, cap_tier=cap_tier
+        )
+        track_b = screen_track_b(rollup, summary, windows, sector=sector, cap_tier=cap_tier)
         t1 = windows["T_1"][-1] if windows["T_1"] else None
 
         persisted = 0
-        if persist and t1 is not None:
+        if persist and t1 is not None and not sector and not cap_tier:
             from src.signals import persist_signals
 
             persisted = persist_signals(conn, track_a, track_b, t1)
@@ -843,6 +991,8 @@ def run_screener(
             "persisted": persisted,
             "top_turnover": top_turnover,
             "top_holder_window": top_holder_window,
+            "sector": sector,
+            "cap_tier": cap_tier,
             "windows": {k: [str(d) for d in v] for k, v in windows.items()},
         }
         return track_a, track_b, meta
@@ -861,10 +1011,41 @@ def inspect_symbol(symbol: str, sessions: int = 22) -> dict:
         rollup = load_rollup(conn, all_needed)
         summary = load_summary(conn, all_needed)
 
+        if summary.is_empty() or "symbol" not in summary.columns:
+            return {
+                "symbol": symbol,
+                "sector": None,
+                "market_cap": None,
+                "cap_tier": "UNKNOWN",
+                "fifty_two_week_high": None,
+                "fifty_two_week_low": None,
+                "vwap": None,
+                "distance_52w_high_pct": None,
+                "distance_52w_low_pct": None,
+                "range_52w_pct": None,
+                "recent": [],
+                "brokers": [],
+                "signals": [],
+            }
+
         sym_sum = summary.filter(pl.col("symbol") == symbol)
-        sym_roll = rollup.filter(pl.col("symbol") == symbol)
+        sym_roll = rollup.filter(pl.col("symbol") == symbol) if (not rollup.is_empty() and "symbol" in rollup.columns) else pl.DataFrame()
         if sym_sum.is_empty():
-            return {"symbol": symbol, "recent": [], "brokers": [], "signals": []}
+            return {
+                "symbol": symbol,
+                "sector": None,
+                "market_cap": None,
+                "cap_tier": "UNKNOWN",
+                "fifty_two_week_high": None,
+                "fifty_two_week_low": None,
+                "vwap": None,
+                "distance_52w_high_pct": None,
+                "distance_52w_low_pct": None,
+                "range_52w_pct": None,
+                "recent": [],
+                "brokers": [],
+                "signals": [],
+            }
 
         sym_sum = sym_sum.with_columns(
             pl.col("close_price").cast(pl.Float64),
@@ -893,6 +1074,41 @@ def inspect_symbol(symbol: str, sessions: int = 22) -> dict:
         ]
 
         close = recent[-1]["close_price"] if recent else None
+
+        latest_row = sym_sum.sort("trade_date").tail(1).row(0, named=True)
+        sec = latest_row.get("sector")
+        mcap = float(latest_row["market_cap"]) if latest_row.get("market_cap") is not None else None
+        h52 = float(latest_row["fifty_two_week_high"]) if latest_row.get("fifty_two_week_high") is not None else None
+        l52 = float(latest_row["fifty_two_week_low"]) if latest_row.get("fifty_two_week_low") is not None else None
+        vwap_val = float(latest_row["vwap"]) if latest_row.get("vwap") is not None else None
+
+        if not sec or mcap is None or h52 is None:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT sector, market_cap, fifty_two_week_high, fifty_two_week_low FROM securities_meta WHERE symbol = %s",
+                        (symbol,),
+                    )
+                    m_row = cur.fetchone()
+                    if m_row:
+                        if not sec and m_row[0]:
+                            sec = m_row[0]
+                        if mcap is None and m_row[1] is not None:
+                            mcap = float(m_row[1])
+                        if h52 is None and m_row[2] is not None:
+                            h52 = float(m_row[2])
+                        if l52 is None and m_row[3] is not None:
+                            l52 = float(m_row[3])
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+        dist_high = round((close - h52) / h52 * 100.0, 2) if (close and h52 and h52 > 0) else None
+        dist_low = round((close - l52) / l52 * 100.0, 2) if (close and l52 and l52 > 0) else None
+        range_pos = round((close - l52) / (h52 - l52) * 100.0, 1) if (close and h52 and l52 and h52 > l52) else None
+
         broker_map: dict[int, dict] = {}
         for name, agg in aggs.items():
             for b in agg.iter_rows(named=True):
@@ -944,6 +1160,15 @@ def inspect_symbol(symbol: str, sessions: int = 22) -> dict:
         )
         return {
             "symbol": symbol,
+            "sector": sec,
+            "market_cap": mcap,
+            "cap_tier": classify_cap_tier(mcap),
+            "fifty_two_week_high": h52,
+            "fifty_two_week_low": l52,
+            "vwap": vwap_val,
+            "distance_52w_high_pct": dist_high,
+            "distance_52w_low_pct": dist_low,
+            "range_52w_pct": range_pos,
             "recent": recent,
             "brokers": brokers,
             "signals": sig_rows,
@@ -957,18 +1182,23 @@ def inspect_symbol(symbol: str, sessions: int = 22) -> dict:
 
 
 def load_top_turnover(
-    conn, as_of: date | None = None, limit: int = 20
+    conn,
+    as_of: date | None = None,
+    limit: int = 20,
+    sector: str | None = None,
+    cap_tier: str | None = None,
 ) -> dict:
-    """Clean per-session top-turnover ranking for a chosen date.
+    """Clean per-session top-turnover ranking for a chosen date with sector & cap tier support.
 
     Returns ``{"date": "YYYY-MM-DD", "rows": [...]}`` where each row is
-    ``{rank, symbol, close, change_pct, qty, turnover}``. If ``as_of`` is given
-    but that exact session is absent (e.g. a non-trading day), it falls back to
-    the most recent trading session on or before the requested date.
+    ``{rank, symbol, close, change_pct, qty, turnover, sector, market_cap, cap_tier, fifty_two_week_high, fifty_two_week_low, vwap}``.
+    If ``as_of`` is given but that exact session is absent (e.g. a non-trading day),
+    it falls back to the most recent trading session on or before the requested date.
     """
     with conn.cursor() as cur:
         cur.execute("SELECT MAX(trade_date) FROM daily_market_summary")
-        latest = cur.fetchone()[0]
+        fetch_res = cur.fetchone()
+        latest = fetch_res[0] if fetch_res else None
         target = as_of if as_of is not None else latest
         if target is None:
             return {"date": None, "rows": []}
@@ -981,24 +1211,95 @@ def load_top_turnover(
         if not row:
             return {"date": None, "rows": []}
         d = row[0]
-        cur.execute(
-            "SELECT symbol, close_price, price_change_pct, total_qty, "
-            "total_turnover, turnover_rank "
-            "FROM daily_market_summary "
-            "WHERE trade_date = %s ORDER BY turnover_rank ASC LIMIT %s",
-            (d, int(limit)),
-        )
-        rows = [
-            {
-                "rank": int(r[5]),
-                "symbol": r[0],
-                "close": float(r[1]) if r[1] is not None else None,
-                "change_pct": float(r[2]) if r[2] is not None else None,
-                "qty": int(r[3]) if r[3] is not None else 0,
-                "turnover": float(r[4]) if r[4] is not None else 0.0,
-            }
-            for r in cur.fetchall()
-        ]
+        try:
+            cur.execute(
+                "SELECT s.symbol, s.close_price, s.price_change_pct, s.total_qty, "
+                "s.total_turnover, s.turnover_rank, "
+                "COALESCE(s.sector, m.sector) AS sector, "
+                "COALESCE(s.market_cap, m.market_cap) AS market_cap, "
+                "COALESCE(s.fifty_two_week_high, m.fifty_two_week_high) AS fifty_two_week_high, "
+                "COALESCE(s.fifty_two_week_low, m.fifty_two_week_low) AS fifty_two_week_low, "
+                "s.vwap "
+                "FROM daily_market_summary s "
+                "LEFT JOIN securities_meta m ON s.symbol = m.symbol "
+                "WHERE s.trade_date = %s ORDER BY s.turnover_rank ASC NULLS LAST",
+                (d,),
+            )
+            raw_rows = cur.fetchall()
+            has_extended = True
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "SELECT symbol, close_price, price_change_pct, total_qty, "
+                    "total_turnover, turnover_rank, sector, market_cap, "
+                    "fifty_two_week_high, fifty_two_week_low, vwap "
+                    "FROM daily_market_summary "
+                    "WHERE trade_date = %s ORDER BY turnover_rank ASC NULLS LAST",
+                    (d,),
+                )
+                raw_rows = cur.fetchall()
+                has_extended = True
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                cur.execute(
+                    "SELECT symbol, close_price, price_change_pct, total_qty, "
+                    "total_turnover, turnover_rank "
+                    "FROM daily_market_summary "
+                    "WHERE trade_date = %s ORDER BY turnover_rank ASC NULLS LAST",
+                    (d,),
+                )
+                raw_rows = cur.fetchall()
+                has_extended = False
+
+        rows = []
+        has_extended = bool(raw_rows and len(raw_rows[0]) >= 11)
+        for idx, r in enumerate(raw_rows):
+            if has_extended:
+                mcap = float(r[7]) if r[7] is not None else None
+                sec = r[6]
+                tier = classify_cap_tier(mcap)
+                high_52w = float(r[8]) if r[8] is not None else None
+                low_52w = float(r[9]) if r[9] is not None else None
+                vwap_val = float(r[10]) if r[10] is not None else None
+            else:
+                mcap = None
+                sec = None
+                tier = "UNKNOWN"
+                high_52w = None
+                low_52w = None
+                vwap_val = None
+
+            if sector and (not sec or sector.strip().lower() not in sec.strip().lower()):
+                continue
+            if cap_tier and tier.upper() != cap_tier.strip().upper():
+                continue
+
+            rank_val = int(r[5]) if (len(r) > 5 and r[5] is not None) else (idx + 1)
+            rows.append(
+                {
+                    "rank": rank_val,
+                    "symbol": r[0],
+                    "close": float(r[1]) if r[1] is not None else None,
+                    "change_pct": float(r[2]) if r[2] is not None else None,
+                    "qty": int(r[3]) if r[3] is not None else 0,
+                    "turnover": float(r[4]) if r[4] is not None else 0.0,
+                    "sector": sec,
+                    "market_cap": mcap,
+                    "cap_tier": tier,
+                    "fifty_two_week_high": high_52w,
+                    "fifty_two_week_low": low_52w,
+                    "vwap": vwap_val,
+                }
+            )
+            if len(rows) >= int(limit if limit else 20):
+                break
     return {"date": str(d), "rows": rows}
 
 
@@ -1144,3 +1445,341 @@ def wash_report(
         "broker": broker_rows,
         "session": session_rows,
     }
+
+
+def position_analysis(symbol: str) -> dict:
+    """Long-only positioning breakdown for a single NEPSE symbol.
+
+    Computes tick-level price extremes, relative volume (RVOL), broker
+    buy/sell pressure, top-3 buyer/seller concentration, wash trade %,
+    and produces a deterministic 3-line positioning verdict.
+
+    Returns a dict with ``context`` (raw data metrics) and ``breakdown``
+    (three structured analysis lines + verdict badge).
+    """
+    conn = get_conn()
+    try:
+        dates = fetch_trade_dates(conn)
+        if not dates:
+            return {"symbol": symbol, "error": "no trade dates available"}
+
+        latest = dates[-1]
+        lookback_20 = dates[-20:] if len(dates) >= 20 else dates
+
+        # --- Latest session summary ---
+        summary = load_summary(conn, [latest])
+        if summary.is_empty():
+            return {"symbol": symbol, "error": "no summary data for latest session"}
+
+        sym_sum = summary.filter(pl.col("symbol") == symbol)
+        if sym_sum.is_empty():
+            return {"symbol": symbol, "error": f"{symbol} not traded on {latest}"}
+
+        sym_sum = sym_sum.with_columns(
+            pl.col("close_price").cast(pl.Float64),
+            pl.col("price_change_pct").cast(pl.Float64),
+            pl.col("total_qty").cast(pl.Int64),
+            pl.col("total_turnover").cast(pl.Float64),
+        )
+        row = sym_sum.sort("trade_date").tail(1).row(0, named=True)
+        ltp = float(row["close_price"])
+        change_pct = float(row["price_change_pct"])
+        total_qty = int(row["total_qty"])
+        total_turnover = float(row["total_turnover"])
+
+        # Sector / cap tier / 52w
+        sec = row.get("sector")
+        mcap = float(row["market_cap"]) if row.get("market_cap") is not None else None
+        cap_tier = classify_cap_tier(mcap)
+        h52 = float(row["fifty_two_week_high"]) if row.get("fifty_two_week_high") is not None else None
+        l52 = float(row["fifty_two_week_low"]) if row.get("fifty_two_week_low") is not None else None
+
+        # --- Share Structure ---
+        if mcap and mcap > 0 and ltp > 0:
+            total_shares = int((mcap * 1_000_000) / ltp)
+        else:
+            total_shares = 10_000_000  # Fallback
+
+        if sec in ["Commercial Banks", "Development Banks", "Microfinance"]:
+            public_ratio = 0.49
+        else:
+            public_ratio = 0.30
+            
+        public_shares = int(total_shares * public_ratio)
+        promoter_shares = total_shares - public_shares
+        
+        public_ratio_pct = (public_shares / total_shares) * 100 if total_shares > 0 else 0.0
+        float_turnover_pct = (total_qty / public_shares) * 100 if public_shares > 0 else 0.0
+
+        # --- Day high/low from floorsheet ---
+        day_high = ltp
+        day_low = ltp
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT MAX(rate), MIN(rate) FROM floorsheet "
+                    "WHERE symbol = %s AND trade_date = %s",
+                    (symbol, latest),
+                )
+                hilo = cur.fetchone()
+                if hilo and hilo[0] is not None:
+                    day_high = float(hilo[0])
+                    day_low = float(hilo[1])
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+        # --- RVOL (20-day average volume) ---
+        avg_20_vol = float(total_qty)
+        if len(lookback_20) > 1:
+            hist_summary = load_summary(conn, lookback_20[:-1])
+            if not hist_summary.is_empty():
+                hist_sym = hist_summary.filter(pl.col("symbol") == symbol)
+                if not hist_sym.is_empty():
+                    hist_sym = hist_sym.with_columns(pl.col("total_qty").cast(pl.Int64))
+                    avg_20_vol = hist_sym["total_qty"].mean()
+                    if avg_20_vol is None or avg_20_vol == 0:
+                        avg_20_vol = float(total_qty)
+                    else:
+                        avg_20_vol = float(avg_20_vol)
+
+        rvol = round(total_qty / avg_20_vol, 2) if avg_20_vol > 0 else 1.0
+
+        # --- Broker rollup for latest session ---
+        rollup = load_rollup(conn, [latest])
+        sym_roll = (
+            rollup.filter(pl.col("symbol") == symbol)
+            if not rollup.is_empty() and "symbol" in rollup.columns
+            else pl.DataFrame()
+        )
+
+        buy_turnover = 0.0
+        sell_turnover = 0.0
+        top3_buyers = []
+        top3_sellers = []
+        top3_buy_qty = 0
+        top3_sell_qty = 0
+        matched_qty_total = 0
+        lead_buyer_id = None
+        lead_seller_id = None
+
+        if not sym_roll.is_empty():
+            sym_roll = sym_roll.with_columns(
+                pl.col("broker_id").cast(pl.Int32),
+                pl.col("buy_qty").cast(pl.Int64),
+                pl.col("sell_qty").cast(pl.Int64),
+                pl.col("buy_amount").cast(pl.Float64),
+                pl.col("sell_amount").cast(pl.Float64),
+                pl.col("matched_qty").cast(pl.Int64),
+            )
+            buy_turnover = float(sym_roll["buy_amount"].sum())
+            sell_turnover = float(sym_roll["sell_amount"].sum())
+            matched_qty_total = int(sym_roll["matched_qty"].sum())
+
+            # Top 3 buyers by buy_qty
+            buyers = sym_roll.sort("buy_qty", descending=True).head(3)
+            top3_buyers = buyers.to_dicts()
+            top3_buy_qty = int(buyers["buy_qty"].sum())
+            if buyers.height > 0:
+                lead_buyer_id = int(buyers[0, "broker_id"])
+
+            # Top 3 sellers by sell_qty
+            sellers = sym_roll.sort("sell_qty", descending=True).head(3)
+            top3_sellers = sellers.to_dicts()
+            top3_sell_qty = int(sellers["sell_qty"].sum())
+            if sellers.height > 0:
+                lead_seller_id = int(sellers[0, "broker_id"])
+
+        # --- Derived percentages ---
+        top3_buy_pct = round(top3_buy_qty / total_qty * 100, 2) if total_qty > 0 else 0.0
+        top3_sell_pct = round(top3_sell_qty / total_qty * 100, 2) if total_qty > 0 else 0.0
+        wash_pct = round(matched_qty_total / total_qty * 100, 2) if total_qty > 0 else 0.0
+        pressure_ratio = round(buy_turnover / (sell_turnover + 1e-5), 2)
+        net_absorption_ratio = round(top3_buy_qty / (top3_sell_qty + 1e-5), 2)
+
+        # Day range and rejection
+        day_range = day_high - day_low
+        if day_range > 0:
+            upper_rejection = round((day_high - ltp) / day_range, 4)
+        else:
+            upper_rejection = 0.0
+
+        # --- Deterministic scoring engine ---
+        score = 0
+
+        # Price action signals
+        if upper_rejection < 0.25:
+            score += 1  # Closed near highs
+        elif upper_rejection > 0.60:
+            score -= 2  # Severe rejection from highs
+
+        if change_pct > 0:
+            score += 1
+        elif change_pct < -2.0:
+            score -= 1
+
+        # Volume signal
+        if rvol >= 1.5:
+            if upper_rejection < 0.30:
+                score += 1  # High volume + close near highs = absorption
+            elif upper_rejection > 0.50:
+                score -= 1  # High volume + rejection = distribution
+
+        # Buyer/seller concentration
+        if net_absorption_ratio > 1.3:
+            score += 1
+        elif net_absorption_ratio < 0.7:
+            score -= 1
+
+        if top3_buy_pct > top3_sell_pct + 10:
+            score += 1
+        elif top3_sell_pct > top3_buy_pct + 10:
+            score -= 1
+
+        # Wash trade penalty
+        if wash_pct > 25:
+            score -= 1
+
+        # Clamp
+        score = max(-5, min(5, score))
+
+        # --- 3-line breakdown ---
+        # 1. Supply & Price Action
+        if upper_rejection < 0.25 and rvol >= 1.5:
+            supply_line = (
+                f"Traded {float_turnover_pct:.1f}% of public float today ({rvol:.1f}x RVOL); "
+                f"strong float absorption near daily highs ({ltp} NPR, rejection {upper_rejection:.0%}). "
+                f"Buyers maintained control through the session."
+            )
+        elif upper_rejection < 0.25:
+            supply_line = (
+                f"Traded {float_turnover_pct:.1f}% of public float today ({rvol:.1f}x RVOL); "
+                f"price held near session highs ({ltp} NPR, rejection {upper_rejection:.0%}). "
+                f"Steady absorption, no panic selling."
+            )
+        elif upper_rejection > 0.50 and rvol >= 1.5:
+            supply_line = (
+                f"Traded {float_turnover_pct:.1f}% of public float today ({rvol:.1f}x RVOL). "
+                f"Price rejected off highs — intraday high {day_high} NPR saw {upper_rejection:.0%} rejection to close {ltp} NPR. "
+                f"Supply overwhelmed demand at higher levels."
+            )
+        elif upper_rejection > 0.50:
+            supply_line = (
+                f"Traded {float_turnover_pct:.1f}% of public float today ({rvol:.1f}x RVOL). "
+                f"Weak close with {upper_rejection:.0%} rejection from session high {day_high} NPR. "
+                f"Sellers dominated the tape."
+            )
+        else:
+            supply_line = (
+                f"Traded {float_turnover_pct:.1f}% of public float today ({rvol:.1f}x RVOL). "
+                f"Mixed session: {ltp} NPR with {upper_rejection:.0%} rejection from high. "
+                f"Neither buyers nor sellers decisively in control."
+            )
+
+        # 2. Operator Intent
+        if net_absorption_ratio > 1.3 and top3_buy_pct > 40:
+            intent_line = (
+                f"Smart money concentrated on buy side — Top 3 buyers absorbed {top3_buy_pct:.1f}% "
+                f"of volume (Lead: Broker {lead_buyer_id}) vs sellers at {top3_sell_pct:.1f}%. "
+                f"Net absorption ratio {net_absorption_ratio:.2f}x signals institutional accumulation."
+            )
+        elif net_absorption_ratio < 0.7 and top3_sell_pct > 40:
+            intent_line = (
+                f"Major brokers offloading — Top 3 sellers dumped {top3_sell_pct:.1f}% of volume "
+                f"(Lead: Broker {lead_seller_id}) to fragmented buyers at {top3_buy_pct:.1f}%. "
+                f"Distribution pattern with {net_absorption_ratio:.2f}x absorption ratio."
+            )
+        elif wash_pct > 25:
+            intent_line = (
+                f"High wash/matching volume at {wash_pct:.1f}% signals artificial turnover. "
+                f"Top 3 buyers: {top3_buy_pct:.1f}% vs sellers: {top3_sell_pct:.1f}%. "
+                f"Exercise caution — genuine directional flow unclear."
+            )
+        else:
+            intent_line = (
+                f"Balanced broker activity — Top 3 buyers hold {top3_buy_pct:.1f}% "
+                f"vs sellers at {top3_sell_pct:.1f}% (Lead buyer: Broker {lead_buyer_id}). "
+                f"No extreme concentration on either side; monitoring for directional commitment."
+            )
+
+        # 3. Verdict
+        if score >= 4:
+            verdict = "Strong Buy"
+            verdict_detail = (
+                f"Score {score}/5 — Clean float absorption with concentrated institutional buying. "
+                f"Strong close on elevated volume supports a long entry."
+            )
+        elif score >= 2:
+            verdict = "Buy"
+            verdict_detail = (
+                f"Score {score}/5 — Constructive accumulation pattern with moderate conviction. "
+                f"Lean long with measured position sizing."
+            )
+        elif score <= -3:
+            verdict = "Avoid / Exit"
+            verdict_detail = (
+                f"Score {score}/5 — Distribution signals dominate: heavy rejection, "
+                f"seller concentration, or wash trading. Exit longs or stay flat."
+            )
+        elif score <= -1:
+            verdict = "Avoid / Exit"
+            verdict_detail = (
+                f"Score {score}/5 — Weak price action and/or unfavorable broker flow. "
+                f"Not a clean setup for long positioning."
+            )
+        else:
+            verdict = "Hold"
+            verdict_detail = (
+                f"Score {score}/5 — Neutral signals. Neither strong accumulation nor distribution. "
+                f"Wait for clearer directional commitment before acting."
+            )
+
+        return {
+            "symbol": symbol,
+            "trade_date": str(latest),
+            "context": {
+                "ltp": ltp,
+                "price_change_pct": change_pct,
+                "day_high": day_high,
+                "day_low": day_low,
+                "day_range": round(day_range, 2),
+                "upper_rejection": upper_rejection,
+                "total_qty": total_qty,
+                "total_turnover": total_turnover,
+                "rvol": rvol,
+                "avg_20_volume": round(avg_20_vol, 0),
+                "sector": sec,
+                "market_cap": mcap,
+                "cap_tier": cap_tier,
+                "fifty_two_week_high": h52,
+                "fifty_two_week_low": l52,
+                "buy_turnover": buy_turnover,
+                "sell_turnover": sell_turnover,
+                "pressure_ratio": pressure_ratio,
+                "top_3_buy_pct": top3_buy_pct,
+                "top_3_sell_pct": top3_sell_pct,
+                "top_buyer_broker": lead_buyer_id,
+                "top_seller_broker": lead_seller_id,
+                "net_absorption_ratio": net_absorption_ratio,
+                "wash_pct": wash_pct,
+                "matched_qty": matched_qty_total,
+            },
+            "share_structure": {
+                "public_shares": public_shares,
+                "promoter_shares": promoter_shares,
+                "total_shares": total_shares,
+                "public_ratio_pct": round(public_ratio_pct, 1),
+                "float_turnover_pct": round(float_turnover_pct, 2),
+            },
+            "breakdown": {
+                "supply_price_action": supply_line,
+                "operator_intent": intent_line,
+                "verdict": verdict,
+                "verdict_detail": verdict_detail,
+                "score": score,
+            },
+        }
+    finally:
+        conn.close()
