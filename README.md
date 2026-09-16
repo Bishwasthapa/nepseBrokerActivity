@@ -403,6 +403,7 @@ multi-window position, and what they did *today*.
 | `ACTIVE_MARKUP` | A | `n22 > 0`, `n1 > 0`, `t1_change > 2.5%`, margin `> 5%` — position now pushing price up with expanding profit |
 | `DISTRIBUTION_TRAP` | A | broker **was** a dominant buyer (`T_22/T_66 ≥ 8%`) but is the **top T_1 seller** with `n1 < 0` — the "strength" exit |
 | `STEALTH_ACCUMULATION` | B | `price_change_pct(T_22) ∈ [−4, +4]%`, T_1 turnover ≥ **2×** 22-day average, top broker `net[T_22]` absorption `≥ 20%`, seller dispersion `< 25%` — fragmented selling + tight price + volume spike |
+| `SMART_MONEY_ABSORPTION` | C | Scraped live from ShareSansar via Playwright, sent to Gemini AI for natural language analysis, and alerted to Discord/Web UI. |
 | `WATCH` | A | fallback/unclassified (not persisted) |
 
 ### 6.5 Streak semantics (`signals.current_streaks`)
@@ -574,8 +575,8 @@ docker compose run --rm app python -m src.cli signals --streak 2
 # 6. Per-symbol analysis + next-session prediction (rank<->broker<->price)
 docker compose run --rm app python -m src.cli analyze ADBL --sessions 30
 
-# 7. Web UI (http://localhost:8000 — includes an "Analyze" tab calling `GET /api/analyze/{SYMBOL}`)
-docker compose run --rm app python -m src.cli serve
+# 7. Web UI (http://localhost:18000 — includes an "Analyze" tab and "Smart Money" AI Alerts)
+docker compose run --rm -p 18000:8000 app python -m src.cli serve --port 8000
 
 # 8. Test
 docker compose run --rm app python -m pytest

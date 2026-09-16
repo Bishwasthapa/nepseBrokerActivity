@@ -276,6 +276,7 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
     <button data-view="broker" title="Broker holdings &amp; activity: multi-session net flows and accumulated symbols.">Broker</button>
     <button data-view="momentum" title="Turnover &amp; rank rotation: compare recent vs baseline liquidity shifts.">Momentum</button>
     <button data-view="wash" title="Internal broker matching: detect same-broker buy and sell cross-trades.">Wash</button>
+    <button data-view="smartmoney" title="Track C: Playwright scraper + AI insights on smart money absorption.">Smart Money Alerts</button>
     <button data-view="run" title="Dual-track screener: Track A momentum and Track B stealth accumulation.">Full Scan</button>
     <button data-view="signals" title="Historical screener signals and persistence streaks.">Signals</button>
     <button data-view="analyze" title="Rank-price correlation, broker signature classification, and forward returns.">Analyze</button>
@@ -436,6 +437,21 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   <button onclick="loadRun()">Run Scan</button></div>
   <div class="block"><h3>Track A &mdash; Broker Flow Signals</h3><div id="run-a" class="empty">Runs Track A + Track B with a dominant-broker overlay.</div></div>
   <div class="block"><h3>Track B &mdash; Stealth Accumulation Setups</h3><div id="run-b" class="empty"></div></div>
+</section>
+
+<section class="view" id="view-smartmoney">
+  <div class="view-intro">
+    <h2>Smart Money Absorption (Playwright + Gemini AI)</h2>
+    <p>Scrapes live ShareSansar top brokers, identifies extreme absorption accumulation, and uses AI to generate instant actionable insights.</p>
+    <div class="tips">
+      <span class="tag"><b>Web Scraper</b>: Headless Chromium bypasses rate limits.</span>
+      <span class="tag"><b>AI Analyst</b>: Gemini summarizes the technicals and flows.</span>
+    </div>
+  </div>
+  <div class="controls">
+  <label title="Analysis end date. Defaults to the latest.">As of Date<input id="sm-asof" class="dti" type="date" value="__LATEST_DATE__"></label>
+  <button onclick="loadSmartmoney()">Run AI Scan</button></div>
+  <div class="block"><h3>Real-time Alerts</h3><div id="sm-out" class="empty">Click "Run AI Scan" to trigger the pipeline (can take ~15s).</div></div>
 </section>
 
 <section class="view" id="view-signals">
@@ -744,6 +760,27 @@ var TRACK_B_COLS=[
   {key:'volume_inflection',label:'Vol Inflect',type:'num',desc:'5-day average volume ÷ 22-day average volume'},
   {key:'margin_pct',label:'Margin %',type:'pct',desc:'Broker unrealized profit/loss margin % vs current close'}
 ];
+
+function loadSmartmoney(){
+  setStatus('Triggering AI pipeline...');
+  var url='smartmoney';
+  var asof=val('sm-asof');
+  if(asof)url+='?as_of='+asof;
+  api(url).then(function(data){
+    if(!data){ q('sm-out').innerHTML='<div class="empty">Pipeline failed.</div>'; return; }
+    if(data.error) { q('sm-out').innerHTML='<div class="empty">Error: '+data.error+'</div>'; return; }
+    if(data.message) { q('sm-out').innerHTML='<div class="empty">'+data.message+'</div>'; return; }
+    var html = '';
+    for(var i=0; i<data.brokers.length; i++) {
+        var b = data.brokers[i];
+        html += '<div class="concl" style="margin-bottom:1rem;"><h4 class="concl-head">' + b.stock_symbol + ' - Broker ' + b.broker_id + ' (' + b.broker_name + ')</h4>';
+        html += '<p><strong>Net Buy:</strong> ' + b.net_qty + '</p>';
+        html += '<p style="color:var(--text); white-space:pre-wrap;">' + b.ai_insight + '</p></div>';
+    }
+    q('sm-out').innerHTML = html;
+  });
+}
+
 function loadRun(){
   var s=val('run-sector'),c=val('run-cap');
   var url='run?top_n='+(val('run-top')||20)+'&holdings_sessions='+(val('run-holder')||22);

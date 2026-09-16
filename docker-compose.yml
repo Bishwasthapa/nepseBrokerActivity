@@ -30,6 +30,8 @@ services:
     environment:
       DATABASE_URL: postgresql://quant:quantpass@db:5432/nepse_analytics
       PYTHONUNBUFFERED: "1"
+    env_file:
+      - .env
     command: ["python", "-m", "src.cli", "run"]
 
 volumes:

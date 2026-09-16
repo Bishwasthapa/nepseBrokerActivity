@@ -300,9 +300,10 @@ docker compose run --rm app python -m src.cli serve --port 8000
 
 | Route | Purpose |
 |---|---|
-| `/` | Navigable single-page UI: **Top Turnover · Inspect Symbol · Broker · Momentum · Wash · Full Scan · Signals · Watchlist** (click any symbol/broker to jump between views) |
+| `/` | Navigable single-page UI: **Top Turnover · Inspect Symbol · Broker · Momentum · Wash · Smart Money Alerts · Full Scan · Signals · Watchlist** (click any symbol/broker to jump between views) |
 | `/api/top?as_of=YYYY-MM-DD&limit=N` | Clean top-turnover ranking (cached) |
 | `/api/run?as_of&top&top_holder_window` | Full Track A / Track B scan result (cached) |
+| `/api/smartmoney?as_of` | Track C AI Insights via Playwright (cached) |
 | `/api/momentum?short&base&as_of` | Multi-window momentum gainers / losers (cached) |
 | `/api/wash?window&min_qty&all&as_of` | Internal-matching broker + session wash scan (cached) |
 | `/api/inspect/<SYMBOL>?sessions` | Single-symbol deep dive (cached) |

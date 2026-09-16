@@ -7,6 +7,9 @@ from datetime import date
 import polars as pl
 
 from src.db import get_conn
+from src.scraper import get_top_brokers_today
+from src.ai_insight import generate_broker_alert
+from src.notifier import send_alert
 
 WINDOWS = {"T_1": 1, "T_5": 5, "T_22": 22, "T_66": 66}
 
@@ -1783,3 +1786,79 @@ def position_analysis(symbol: str) -> dict:
         }
     finally:
         conn.close()
+
+def screen_track_c_smart_money(conn, dates: list[date]) -> dict:
+    """
+    TRACK_C: SMART MONEY ABSORPTION
+    Integrates Playwright scraping, AI analysis, and Discord alerts.
+    """
+    if not dates:
+        return {"error": "no dates"}
+        
+    target_date = dates[-1].isoformat()
+    top_brokers, detected_date = get_top_brokers_today(num_brokers=3, side='buyer', target_date=target_date)
+    
+    if not top_brokers:
+        return {"date": target_date, "message": "No smart money accumulation detected today.", "brokers": []}
+        
+    results = []
+    
+    with conn.cursor() as cur:
+        for broker in top_brokers:
+            # Query the DB to find what this top broker actually accumulated the most today
+            cur.execute("""
+                SELECT 
+                    r.symbol, 
+                    (r.buy_qty - r.sell_qty) AS net_qty,
+                    m.close_price,
+                    m.fifty_two_week_high,
+                    m.sector
+                FROM daily_broker_rollup r
+                JOIN daily_market_summary m ON r.symbol = m.symbol AND r.trade_date = m.trade_date
+                WHERE r.broker_id = %s AND r.trade_date = %s
+                ORDER BY (r.buy_qty - r.sell_qty) DESC
+                LIMIT 1
+            """, (broker['id'], target_date))
+            
+            row = cur.fetchone()
+            if not row:
+                continue
+                
+            stock_symbol = row[0]
+            net_qty = row[1]
+            if net_qty <= 0:
+                continue # Only care if they are net buyers of their top stock
+                
+            close_price = row[2]
+            high_52 = row[3]
+            sector = row[4]
+            
+            stock_data = f"LTP: {close_price}, 52W High: {high_52}, Sector: {sector}, Broker Net Shares: {net_qty}"
+            
+            # Fetch deterministic verdict to prevent AI hallucination and contradictions
+            try:
+                pos_data = position_analysis(stock_symbol)
+                verdict = pos_data["breakdown"]["verdict"]
+                verdict_detail = pos_data["breakdown"]["verdict_detail"]
+                stock_data += f"\nDeterministic Scoring Engine Overall Verdict: {verdict}\nEngine Detail: {verdict_detail}"
+            except Exception as e:
+                print(f"Failed to fetch position analysis for {stock_symbol}: {e}")
+            
+            # 2. Generate AI Alert
+            insight = generate_broker_alert(stock_symbol, broker['id'], broker['name'], net_qty, stock_data)
+            
+            # 3. Send Discord Alert
+            send_alert(insight, title=f"🚨 SMART MONEY ALERT: {stock_symbol}")
+            
+            results.append({
+                "broker_id": broker['id'],
+                "broker_name": broker['name'],
+                "net_qty": f"{net_qty:,}",
+                "stock_symbol": stock_symbol,
+                "ai_insight": insight
+            })
+            
+    return {
+        "date": detected_date,
+        "brokers": results
+    }

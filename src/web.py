@@ -35,6 +35,7 @@ from src.screener import (
     load_summary,
     inspect_symbol,
     position_analysis,
+    screen_track_c_smart_money,
 )
 from src.watchlist import (
     add_note as watch_note,
@@ -259,6 +260,21 @@ class Handler(BaseHTTPRequestHandler):
             }
 
         return self._cached("momentum", params, compute)
+
+    def api_smartmoney(self, q):
+        as_of = _parse_date(_first(q, "as_of"))
+
+        def run(conn):
+            all_dates = fetch_trade_dates(conn)
+            if not all_dates:
+                return {"error": "no trade dates"}
+            if as_of:
+                dates = [d for d in all_dates if d <= as_of]
+            else:
+                dates = all_dates
+            return screen_track_c_smart_money(conn, dates)
+
+        return self._cached("smartmoney", {"as_of": as_of}, run)
 
     def api_wash(self, q):
         as_of = _parse_date(_first(q, "as_of"))
@@ -514,6 +530,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(self.api_top(q))
                 elif command == "run":
                     self._send_json(self.api_run(q))
+                elif command == "smartmoney":
+                    self._send_json(self.api_smartmoney(q))
                 elif command == "momentum":
                     self._send_json(self.api_momentum(q))
                 elif command == "wash":

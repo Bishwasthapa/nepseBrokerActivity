@@ -4,3 +4,8 @@ sqlalchemy>=2.0.0
 rich>=13.7.0
 pytest>=8.0.0
 nepse-scraper>=1.0.0
+
+playwright
+httpx
+google-genai
+requests

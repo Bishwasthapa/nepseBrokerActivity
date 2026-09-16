@@ -16,6 +16,8 @@ from pathlib import Path
 from nepse_scraper import NepseScraper
 from nepse_scraper.auth import PayloadParser
 
+from src.api_client import rate_limiter
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "real"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -78,6 +80,12 @@ def _fetch_page(scraper: NepseScraper, date_str: str, payload_id: int, page: int
     }
     if page > 0:
         params["page"] = str(page)
+        
+    allowed, info = rate_limiter.is_allowed("local", "/floorsheet")
+    while not allowed:
+        time.sleep(0.5)
+        allowed, info = rate_limiter.is_allowed("local", "/floorsheet")
+        
     resp = scraper.session.post(
         "/api/nots/nepse-data/floorsheet", params=params, payload={"id": payload_id}
     )

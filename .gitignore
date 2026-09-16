@@ -13,3 +13,6 @@ __pycache__/
 venv/
 # Generated report snapshots & web index
 reports/
+
+# Secrets
+.env
