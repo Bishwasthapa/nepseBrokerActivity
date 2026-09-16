@@ -895,12 +895,14 @@ def render_inspect(data: dict) -> None:
     console.print(recent)
 
     holder = data.get("top_holder_22d")
+    dist_22d = data.get("top_distributor_22d")
     mover = data.get("top_holder_1d")
-    if holder or mover:
+    dist_1d = data.get("top_distributor_1d")
+    if holder or mover or dist_22d or dist_1d:
         summary = Table(
-            title="Holdings Snapshot (22D holder & recent mover)",
+            title="Holdings Snapshot (Top Accumulators & Distributors)",
             title_style="bold white",
-            header_style="bold green",
+            header_style="bold yellow",
             expand=True,
         )
         for col, justify in [
@@ -923,15 +925,15 @@ def render_inspect(data: dict) -> None:
                 _fmt_pct(b["margin_pct"]),
             )
 
-        if holder and (mover is None or mover["broker_id"] != holder["broker_id"]):
-            _row("Longest Holder (22D)", holder)
+        if holder:
+            _row("[bold green]Top Accumulator (22D)[/bold green]", holder)
+        if dist_22d:
+            _row("[bold red]Top Distributor (22D)[/bold red]", dist_22d)
         if mover:
-            _row(
-                "Top Recent Mover (1D)",
-                mover,
-            )
-        if holder and mover and mover["broker_id"] == holder["broker_id"]:
-            _row("Longest Holder + Top Mover", holder)
+            _row("[green]Top Buyer (1D)[/green]", mover)
+        if dist_1d:
+            _row("[red]Top Seller (1D)[/red]", dist_1d)
+
         console.print(summary)
         console.print()
 
@@ -941,30 +943,61 @@ def render_inspect(data: dict) -> None:
         console.print("[dim]No persisted signal history for this symbol[/dim]")
     console.print()
 
-    brokers = Table(
-        title="Broker Net Flows (shares, across windows)",
-        title_style="bold white",
-        header_style="bold yellow",
-    )
-    for col, justify in [
-        ("Broker", "right"),
-        ("Net 1D", "right"),
-        ("Net 5D", "right"),
-        ("Net 22D", "right"),
-        ("Net 66D", "right"),
-        ("Margin %", "right"),
-    ]:
-        brokers.add_column(col, justify=justify)
-    for b in data["brokers"]:
-        brokers.add_row(
-            str(b["broker_id"]),
-            _fmt_num(b["net_1d"]),
-            _fmt_num(b["net_5d"]),
-            _fmt_num(b["net_22d"]),
-            _fmt_num(b["net_66d"]),
-            _fmt_pct(b["margin_pct"]),
+    accumulators = data.get("accumulators") or [b for b in data["brokers"] if b.get("net_22d", 0) > 0]
+    distributors = data.get("distributors") or sorted([b for b in data["brokers"] if b.get("net_22d", 0) < 0], key=lambda b: b.get("net_22d", 0))
+
+    if accumulators:
+        acc_table = Table(
+            title=f"Top Accumulators for {data['symbol']} (Net Buyers)",
+            title_style="bold white",
+            header_style="bold green",
         )
-    console.print(brokers)
+        for col, justify in [
+            ("Broker", "right"),
+            ("Net 1D", "right"),
+            ("Net 5D", "right"),
+            ("Net 22D", "right"),
+            ("Net 66D", "right"),
+            ("Margin %", "right"),
+        ]:
+            acc_table.add_column(col, justify=justify)
+        for b in accumulators[:10]:
+            acc_table.add_row(
+                str(b["broker_id"]),
+                _fmt_num(b["net_1d"]),
+                _fmt_num(b["net_5d"]),
+                _fmt_num(b["net_22d"]),
+                _fmt_num(b["net_66d"]),
+                _fmt_pct(b["margin_pct"]),
+            )
+        console.print(acc_table)
+        console.print()
+
+    if distributors:
+        dist_table = Table(
+            title=f"Top Distributors for {data['symbol']} (Net Sellers / Dumping)",
+            title_style="bold white",
+            header_style="bold red",
+        )
+        for col, justify in [
+            ("Broker", "right"),
+            ("Net 1D", "right"),
+            ("Net 5D", "right"),
+            ("Net 22D", "right"),
+            ("Net 66D", "right"),
+            ("Margin %", "right"),
+        ]:
+            dist_table.add_column(col, justify=justify)
+        for b in distributors[:10]:
+            dist_table.add_row(
+                str(b["broker_id"]),
+                _fmt_num(b["net_1d"]),
+                _fmt_num(b["net_5d"]),
+                _fmt_num(b["net_22d"]),
+                _fmt_num(b["net_66d"]),
+                _fmt_pct(b["margin_pct"]),
+            )
+        console.print(dist_table)
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:

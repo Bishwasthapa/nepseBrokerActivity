@@ -1139,9 +1139,16 @@ def inspect_symbol(symbol: str, sessions: int = 22) -> dict:
             e["margin_pct"] = margin
             brokers.append(e)
         brokers.sort(key=lambda r: r["net_22d"], reverse=True)
-        top_holder_22d = brokers[0] if brokers else None
-        brokers_by_1d = sorted(brokers, key=lambda r: r["net_1d"], reverse=True)
-        top_holder_1d = brokers_by_1d[0] if brokers_by_1d else None
+        accumulators_22d = [b for b in brokers if b.get("net_22d", 0) > 0]
+        distributors_22d = sorted([b for b in brokers if b.get("net_22d", 0) < 0], key=lambda b: b.get("net_22d", 0))
+
+        buyers_1d = sorted([b for b in brokers if b.get("net_1d", 0) > 0], key=lambda b: b.get("net_1d", 0), reverse=True)
+        sellers_1d = sorted([b for b in brokers if b.get("net_1d", 0) < 0], key=lambda b: b.get("net_1d", 0))
+
+        top_accumulator_22d = accumulators_22d[0] if accumulators_22d else None
+        top_distributor_22d = distributors_22d[0] if distributors_22d else None
+        top_accumulator_1d = buyers_1d[0] if buyers_1d else None
+        top_distributor_1d = sellers_1d[0] if sellers_1d else None
 
         from src.signals import load_signal_history
 
@@ -1174,9 +1181,13 @@ def inspect_symbol(symbol: str, sessions: int = 22) -> dict:
             "range_52w_pct": range_pos,
             "recent": recent,
             "brokers": brokers,
+            "accumulators": accumulators_22d,
+            "distributors": distributors_22d,
             "signals": sig_rows,
-            "top_holder_22d": top_holder_22d,
-            "top_holder_1d": top_holder_1d,
+            "top_holder_22d": top_accumulator_22d,
+            "top_distributor_22d": top_distributor_22d,
+            "top_holder_1d": top_accumulator_1d,
+            "top_distributor_1d": top_distributor_1d,
             "momentum": mom,
         }
     finally:
