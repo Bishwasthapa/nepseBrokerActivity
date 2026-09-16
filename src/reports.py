@@ -275,6 +275,7 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
     <button data-view="market" title="Global view of all NEPSE stocks categorized by Buy/Hold/Sell/Avoid with broker details.">Market Overview</button>
     <button data-view="sectors" title="Sector Rotation Dashboard: Track macro capital flow across industries.">Sectors</button>
     <button data-view="syndicates" title="Detect broker syndicates colluding to accumulate the same stocks.">Syndicates</button>
+    <button data-view="backtest" title="Historical T+5 and T+20 Win Rate Backtester.">Backtester</button>
     <button data-view="broker" title="Broker holdings &amp; activity: multi-session net flows and accumulated symbols.">Broker</button>
     <button data-view="momentum" title="Turnover &amp; rank rotation: compare recent vs baseline liquidity shifts.">Momentum</button>
     <button data-view="wash" title="Internal broker matching: detect same-broker buy and sell cross-trades.">Wash</button>
@@ -396,6 +397,22 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   </div>
   <div class="block"><h3>Identified Broker Packs (Last 22 Days)</h3>
     <div id="syndicate-out" class="empty">Click "Detect Syndicates" to run network clustering.</div>
+  </div>
+</section>
+
+<section class="view" id="view-backtest">
+  <div class="view-intro">
+    <h2>Algorithmic Signal Backtester</h2>
+    <p>Replaces intuition with statistics. Evaluates the historical Win Rate of all triggered signals over T+5 and T+20 holding periods.</p>
+    <div class="tips">
+      <span class="tag"><b>Win %</b>: Percentage of historical trades that resulted in a > 0% return.</span>
+    </div>
+  </div>
+  <div class="controls">
+    <button onclick="loadBacktest()">Run Backtest</button>
+  </div>
+  <div class="block"><h3>Historical Strategy Performance</h3>
+    <div id="backtest-out" class="empty">Click "Run Backtest" to evaluate algorithm.</div>
   </div>
 </section>
 
@@ -924,6 +941,14 @@ function loadSyndicate(){
     
     q('syndicate-out').innerHTML = renderTable(rows, SYNDICATE_COLS);
     bindClicks(q('syndicate-out'));
+  });
+}
+var BACKTEST_COLS=[{key:'signal',label:'Strategy Signal'},{key:'count',label:'Total Trades',type:'int'},{key:'t5_win',label:'T+5 Win %',type:'pct'},{key:'t5_avg',label:'T+5 Avg %',type:'pct'},{key:'t20_win',label:'T+20 Win %',type:'pct'},{key:'t20_avg',label:'T+20 Avg %',type:'pct'}];
+function loadBacktest(){
+  q('backtest-out').innerHTML='<div class="empty">Calculating historical performance...</div>';
+  api('backtest').then(function(data){
+    if(!data || !data.backtest){ q('backtest-out').innerHTML='<div class="empty neg">Failed to run backtest.</div>'; return; }
+    q('backtest-out').innerHTML = renderTable(data.backtest, BACKTEST_COLS);
   });
 }
 var ANL_TIME_COLS=[{key:'trade_date',label:'Date',desc:'Trading session date'},{key:'rank',label:'Rank',desc:'Turnover rank that session; 1 = most traded on the whole exchange'},{key:'rank_pctile',label:'Rank %ile',type:'num',desc:'rank \u00f7 symbols traded that day; lower = busier'},{key:'close',label:'Close',type:'num',desc:'Session closing price'},{key:'change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change'},{key:'qty',label:'Qty',type:'int',desc:'Shares traded that session'},{key:'turnover',label:'Turnover',type:'num',desc:'NRS turnover that session'},{key:'top_accum_id',label:'Top Accum',type:'broker',desc:'Broker that net-bought the most that day (click to open the Broker tab)'},{key:'top_accum_net',label:'Top Net',type:'int',desc:"That broker's net buy in shares (buy \u2212 sell)"},{key:'net_breadth',label:'Breadth',type:'int',desc:'How many brokers were net buyers that session'},{key:'concentration',label:'Conc',type:'num',desc:"|top buyer's net| \u00f7 sum of all brokers' |nets|; low = no single dominant buyer"},{key:'sustained',label:'Sust',desc:'Is the top-accumulator broker the same as the previous session?'},{key:'signature',label:'Signature',desc:'Crowd type: MULTI = \u22653 net buyers \u00b7 SINGLE = 1 net buyer \u00b7 DISTRIBUTE = top netter sold \u00b7 NEUTRAL = unclear'},{key:'fwd_1',label:'T+1',type:'pct',desc:'Forward close-to-close return 1 session later'},{key:'fwd_3',label:'T+3',type:'pct',desc:'Forward close-to-close return 3 sessions later'}];

@@ -1997,3 +1997,66 @@ def detect_syndicates(conn, window: int = 22) -> list[dict]:
         
     return results
 
+def backtest_signals(conn) -> list[dict]:
+    """Calculate historical T+5 and T+20 win rates for algorithmic signals."""
+    dates = fetch_trade_dates(conn)
+    dates_map = {d: i for i, d in enumerate(dates)}
+    
+    with conn.cursor() as cur:
+        cur.execute('SELECT trade_date, symbol, signal FROM screener_signals_history')
+        signals = cur.fetchall()
+        
+        cur.execute('SELECT trade_date, symbol, close_price FROM daily_market_summary')
+        market = cur.fetchall()
+        
+    prices = {(row[0], row[1]): float(row[2]) for row in market}
+    
+    results = {}
+    
+    for s_date, symbol, signal in signals:
+        if s_date not in dates_map: continue
+        idx = dates_map[s_date]
+        
+        base_price = prices.get((s_date, symbol))
+        if not base_price: continue
+            
+        t5_ret = None
+        if idx + 5 < len(dates):
+            t5_price = prices.get((dates[idx + 5], symbol))
+            if t5_price: t5_ret = ((t5_price - base_price) / base_price * 100)
+            
+        t20_ret = None
+        if idx + 20 < len(dates):
+            t20_price = prices.get((dates[idx + 20], symbol))
+            if t20_price: t20_ret = ((t20_price - base_price) / base_price * 100)
+            
+        if signal not in results:
+            results[signal] = {'count':0, 't5_sum':0, 't5_wins':0, 't5_count':0, 't20_sum':0, 't20_wins':0, 't20_count':0}
+            
+        results[signal]['count'] += 1
+        if t5_ret is not None:
+            results[signal]['t5_count'] += 1
+            results[signal]['t5_sum'] += t5_ret
+            if t5_ret > 0: results[signal]['t5_wins'] += 1
+        if t20_ret is not None:
+            results[signal]['t20_count'] += 1
+            results[signal]['t20_sum'] += t20_ret
+            if t20_ret > 0: results[signal]['t20_wins'] += 1
+            
+    final = []
+    for sig, data in results.items():
+        t5_avg = data['t5_sum'] / data['t5_count'] if data['t5_count'] else None
+        t5_win = data['t5_wins'] / data['t5_count'] * 100 if data['t5_count'] else None
+        t20_avg = data['t20_sum'] / data['t20_count'] if data['t20_count'] else None
+        t20_win = data['t20_wins'] / data['t20_count'] * 100 if data['t20_count'] else None
+        final.append({
+            'signal': sig, 
+            'count': data['count'],
+            't5_avg': t5_avg, 
+            't5_win': t5_win,
+            't20_avg': t20_avg, 
+            't20_win': t20_win
+        })
+        
+    return sorted(final, key=lambda x: x['count'], reverse=True)
+
