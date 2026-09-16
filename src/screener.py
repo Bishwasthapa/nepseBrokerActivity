@@ -1873,3 +1873,39 @@ def screen_track_c_smart_money(conn, dates: list[date]) -> dict:
         "date": detected_date,
         "brokers": results
     }
+
+def market_overview() -> list:
+    """Run position analysis for all active symbols concurrently."""
+    import concurrent.futures
+    conn = get_conn()
+    try:
+        dates = fetch_trade_dates(conn)
+        if not dates:
+            return []
+        latest = dates[-1]
+        
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT symbol FROM daily_market_summary "
+                "WHERE trade_date = %s AND close_price > 0 AND total_qty > 0 "
+                "ORDER BY symbol ASC",
+                (latest,)
+            )
+            symbols = [r[0] for r in cur.fetchall()]
+    finally:
+        conn.close()
+        
+    def _analyze(sym):
+        try:
+            res = position_analysis(sym)
+            if not res or res.get("error"):
+                return None
+            return res
+        except Exception:
+            return None
+            
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        results = list(executor.map(_analyze, symbols))
+        
+    return [r for r in results if r]
+

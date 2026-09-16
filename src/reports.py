@@ -271,8 +271,8 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   <div class="brand">NEPSE Screener</div>
   <nav>
     <button class="active" data-view="top" title="Top turnover ranking across the exchange for a given trading session.">Top Turnover</button>
-    <button data-view="position" title="Long-only positioning breakdown and actionable verdict.">Position</button>
-    <button data-view="inspect" title="Single-stock deep dive: price history, broker net flows, and screener signals.">Inspect Symbol</button>
+    <button data-view="inspect" title="Centralized single-stock dashboard: verdict, broker net flows, momentum, and signals.">Stock Central</button>
+    <button data-view="market" title="Global view of all NEPSE stocks categorized by Buy/Hold/Sell/Avoid with broker details.">Market Overview</button>
     <button data-view="broker" title="Broker holdings &amp; activity: multi-session net flows and accumulated symbols.">Broker</button>
     <button data-view="momentum" title="Turnover &amp; rank rotation: compare recent vs baseline liquidity shifts.">Momentum</button>
     <button data-view="wash" title="Internal broker matching: detect same-broker buy and sell cross-trades.">Wash</button>
@@ -316,34 +316,26 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   <div class="block"><h3>Top by total turnover</h3><div id="top-out" class="empty">Pick a trading date (clear it for the latest) and click Load. Click any symbol to inspect it.</div></div>
 </section>
 
-<section class="view" id="view-position">
-  <div class="view-intro">
-    <h2>Positioning Breakdown</h2>
-    <p>Data-driven long-only positioning breakdown assessing supply absorption, operator intent, and price action.</p>
-    <div class="tips">
-      <span class="tag"><b>Verdict</b>: Strong Buy / Buy / Hold / Avoid</span>
-    </div>
-  </div>
-  <div class="controls"><label title="NEPSE ticker, e.g. LEC">Ticker<input id="pos-sym" placeholder="e.g. LEC" onkeydown="if(event.key==='Enter')loadPosition()"></label>
-  <button onclick="loadPosition()">Inspect</button></div>
-  <div class="block"><h3 id="pos-h">Data Context</h3><div id="pos-context" class="empty">Type a ticker and click Inspect.</div></div>
-  <div class="block"><h3>3-Line Breakdown</h3><div id="pos-breakdown" class="empty"></div></div>
-</section>
-
 <section class="view" id="view-inspect">
   <div class="view-intro">
-    <h2>Inspect Symbol Diagnostics</h2>
-    <p>Single-ticker deep dive combining multi-window price action, 52-week price channels, turnover momentum profiles, net broker inventory flows, and historical screener trigger records.</p>
+    <h2>Stock Central Dashboard</h2>
+    <p>Unified single-ticker deep dive: Actionable verdicts, multi-window price action, turnover momentum profiles, net broker inventory flows, and historical screener alerts.</p>
     <div class="tips">
+      <span class="tag"><b>Verdict</b>: Strong Buy / Buy / Hold / Avoid</span>
       <span class="tag"><b>Fundamental Context</b>: Sector, market cap tier, and 52-week channel position</span>
       <span class="tag"><b>Momentum Profile</b>: Short vs baseline liquidity expansion &amp; state badge</span>
       <span class="tag"><b>Broker Net Flow</b>: Cumulative net buying/selling across T1 (1D), T5 (1W), T22 (1M), and T66 (1Q)</span>
       <span class="tag"><b>Signal History</b>: Multi-day persistent scanner alerts</span>
     </div>
   </div>
-  <div class="controls"><label title="NEPSE ticker, e.g. LEC">Ticker<input id="insp-sym" placeholder="e.g. LEC"></label>
+  <div class="controls"><label title="NEPSE ticker, e.g. LEC">Ticker<input id="insp-sym" placeholder="e.g. LEC" onkeydown="if(event.key==='Enter')loadInspect()"></label>
   <label title="How many recent trading sessions to display.">Lookback<input id="insp-sess" type="number" value="22" min="5"></label>
   <button onclick="loadInspect()">Inspect</button></div>
+  <div class="block" id="insp-pos-wrap" style="display:none">
+    <h3 id="insp-pos-h">Positioning Verdict &amp; Context</h3>
+    <div id="insp-pos-context" style="margin-bottom:1rem;"></div>
+    <div id="insp-pos-breakdown"></div>
+  </div>
   <div class="block" id="insp-meta-wrap" style="display:none"><h3>Fundamental &amp; Technical Profile</h3><div id="insp-meta"></div></div>
   <div class="block" id="insp-mom-wrap" style="display:none"><h3>Momentum &amp; Liquidity Profile</h3><div id="insp-mom"></div></div>
   <div class="block" id="insp-snap-wrap" style="display:none"><h3>Key Accumulators &amp; Distributors Snapshot</h3><div id="insp-snap"></div></div>
@@ -352,6 +344,24 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   <div class="block" id="insp-dist-wrap" style="display:none"><h3>Top Distributor Brokers (Net Sellers / Dumping)</h3><div id="insp-dist-brokers"></div></div>
   <div class="block"><h3>All Broker Net Flows</h3><div id="insp-brokers"></div></div>
   <div class="block"><h3>Signal History</h3><div id="insp-signals"></div></div>
+</section>
+
+<section class="view" id="view-market">
+  <div class="view-intro">
+    <h2>Global Market Overview</h2>
+    <p>Complete categorization of all active NEPSE stocks based on their institutional supply absorption and actionable verdict.</p>
+    <div class="tips">
+      <span class="tag"><b>Verdict</b>: Strong Buy / Buy / Hold / Avoid</span>
+      <span class="tag"><b>Top Accumulator</b>: The broker quietly buying the most shares today.</span>
+      <span class="tag"><b>Top Distributor</b>: The broker dumping the most shares today.</span>
+    </div>
+  </div>
+  <div class="controls">
+    <button onclick="loadMarket()">Load Global Scanner</button>
+  </div>
+  <div class="block"><h3 id="market-h">Categorized Market Screener</h3>
+    <div id="market-out" class="empty">Click "Load Global Scanner" to scan all active NEPSE stocks. (May take 5-10 seconds on first run of the day).</div>
+  </div>
 </section>
 
 <section class="view" id="view-broker">
@@ -667,70 +677,177 @@ function loadTop(){
     loadLazyVerdicts('top-out');
   });
 }
-function loadPosition(){
-  var sym=val('pos-sym').trim().toUpperCase();
-  if(!sym)return;
-  api('position/'+sym).then(function(data){
-    if(!data){ q('pos-context').innerHTML='<div class="empty">No data found.</div>'; q('pos-breakdown').innerHTML=''; return; }
-    if(data.error){ q('pos-context').innerHTML='<div class="empty neg">'+data.error+'</div>'; q('pos-breakdown').innerHTML=''; return; }
+function loadInspect() {
+  var sym = val('insp-sym').trim().toUpperCase();
+  if(!sym) return;
+  
+  var sess = val('insp-sess') || 22;
+  
+  Promise.all([
+    api('inspect/'+sym+'?sessions='+sess),
+    api('position/'+sym)
+  ]).then(function(res) {
+    var data = res[0];
+    var posData = res[1];
     
-    q('pos-h').textContent='Data Context \u2014 '+sym;
-    var ctx=data.context;
-    var ss=data.share_structure;
-    var bd=data.breakdown;
+    if(!data) return;
     
-    var ctxHtml='<div class="stat-row" style="margin-bottom:0.75rem; font-size:0.88rem; color:var(--text);">' +
-        '<span><strong>Tradable Float:</strong> ' + fmtInt(ss.public_shares) + ' (' + ss.public_ratio_pct + '%)</span> &middot; ' +
-        '<span><strong>Promoter Shares:</strong> ' + fmtInt(ss.promoter_shares) + '</span> &middot; ' +
-        '<span><strong>Float Turnover:</strong> ' + ss.float_turnover_pct + '%</span></div>';
-        
-    var rows=[
-      {label: 'Price', val: fmt(ctx.ltp) + ' ('+pct(ctx.price_change_pct)+')'},
-      {label: 'Day Range', val: fmt(ctx.day_low) + ' - ' + fmt(ctx.day_high) + ' (Rejection: ' + (ctx.upper_rejection*100).toFixed(0) + '%)'},
-      {label: 'Total Qty / RVOL', val: fmtInt(ctx.total_qty) + ' / ' + ctx.rvol + 'x'},
-      {label: 'Pressure Ratio', val: ctx.pressure_ratio + 'x'},
-      {label: 'Top 3 Buy/Sell %', val: ctx.top_3_buy_pct + '% / ' + ctx.top_3_sell_pct + '%'},
-      {label: 'Net Absorption Ratio', val: ctx.net_absorption_ratio + 'x'},
-      {label: 'Wash %', val: ctx.wash_pct + '%'}
-    ];
+    // Position rendering
+    if(posData && !posData.error && posData.context) {
+      q('insp-pos-wrap').style.display='block';
+      q('insp-pos-h').textContent='Positioning Verdict & Context \u2014 '+sym;
+      var ctx=posData.context;
+      var ss=posData.share_structure;
+      var bd=posData.breakdown;
+      
+      var ctxHtml='<div class="stat-row" style="margin-bottom:0.75rem; font-size:0.88rem; color:var(--text);">' +
+          '<span><strong>Tradable Float:</strong> ' + fmtInt(ss.public_shares) + ' (' + ss.public_ratio_pct + '%)</span> &middot; ' +
+          '<span><strong>Promoter Shares:</strong> ' + fmtInt(ss.promoter_shares) + '</span> &middot; ' +
+          '<span><strong>Float Turnover:</strong> ' + ss.float_turnover_pct + '%</span></div>';
+          
+      var rows=[
+        {label: 'Price', val: fmt(ctx.ltp) + ' ('+pct(ctx.price_change_pct)+')'},
+        {label: 'Day Range', val: fmt(ctx.day_low) + ' - ' + fmt(ctx.day_high) + ' (Rejection: ' + (ctx.upper_rejection*100).toFixed(0) + '%)'},
+        {label: 'Total Qty / RVOL', val: fmtInt(ctx.total_qty) + ' / ' + ctx.rvol + 'x'},
+        {label: 'Pressure Ratio', val: ctx.pressure_ratio + 'x'},
+        {label: 'Top 3 Buy/Sell %', val: ctx.top_3_buy_pct + '% / ' + ctx.top_3_sell_pct + '%'},
+        {label: 'Net Absorption Ratio', val: ctx.net_absorption_ratio + 'x'},
+        {label: 'Wash %', val: ctx.wash_pct + '%'}
+      ];
+      var tHtml='<table class="meta"><tbody>';
+      for(var i=0;i<rows.length;i++) tHtml+='<tr><th>'+rows[i].label+'</th><td>'+rows[i].val+'</td></tr>';
+      tHtml+='</tbody></table>';
+      q('insp-pos-context').innerHTML=ctxHtml + tHtml;
+      
+      var vClass = 'neutral';
+      if(bd.verdict.indexOf('Strong Buy')!==-1) vClass='gainer';
+      else if(bd.verdict.indexOf('Buy')!==-1) vClass='stealth';
+      else if(bd.verdict.indexOf('Avoid')!==-1) vClass='loser';
+      
+      var bdHtml='<div class="concl"><div class="concl-head"><span class="badge '+vClass+'">'+bd.verdict+'</span></div>' +
+          '<ul><li><strong>Supply &amp; Price Action:</strong> '+bd.supply_price_action+'</li>' +
+          '<li><strong>Operator Intent:</strong> '+bd.operator_intent+'</li>' +
+          '<li><strong>Actionable Verdict:</strong> '+bd.verdict_detail+'</li></ul></div>';
+      q('insp-pos-breakdown').innerHTML=bdHtml;
+    } else {
+      q('insp-pos-wrap').style.display='none';
+    }
+
+    // Existing inspect rendering
+    q('recent-h').textContent='Daily History \u2014 '+sym;
     
-    var tHtml='<table class="meta"><tbody>';
-    for(var i=0;i<rows.length;i++) tHtml+='<tr><th>'+rows[i].label+'</th><td>'+rows[i].val+'</td></tr>';
-    tHtml+='</tbody></table>';
+    if(data.sector||data.cap_tier||data.fifty_two_week_high!=null||data.vwap!=null){
+      q('insp-meta-wrap').style.display='block';
+      q('insp-meta').innerHTML=renderInspectMeta(data);
+    } else {
+      q('insp-meta-wrap').style.display='none';
+    }
     
-    q('pos-context').innerHTML=ctxHtml + tHtml;
+    if(data.momentum){
+      q('insp-mom-wrap').style.display='block';
+      q('insp-mom').innerHTML=renderMomentumCard(data.momentum,5,22);
+      bindClicks(q('insp-mom'));
+    } else {
+      q('insp-mom-wrap').style.display='none';
+    }
     
-    var vClass = 'neutral';
-    if(bd.verdict.indexOf('Strong Buy')!==-1) vClass='gainer';
-    else if(bd.verdict.indexOf('Buy')!==-1) vClass='stealth';
-    else if(bd.verdict.indexOf('Avoid')!==-1) vClass='loser';
+    if(q('insp-snap-wrap')){
+      var snapHtml=renderInspectHoldingsSnapshot(data);
+      if(snapHtml){
+        q('insp-snap-wrap').style.display='block';
+        q('insp-snap').innerHTML=snapHtml;
+        bindClicks(q('insp-snap'));
+      }else{
+        q('insp-snap-wrap').style.display='none';
+      }
+    }
     
-    var bdHtml='<div class="concl"><div class="concl-head"><span class="badge '+vClass+'">'+bd.verdict+'</span></div>' +
-        '<ul><li><strong>Supply &amp; Price Action:</strong> '+bd.supply_price_action+'</li>' +
-        '<li><strong>Operator Intent:</strong> '+bd.operator_intent+'</li>' +
-        '<li><strong>Actionable Verdict:</strong> '+bd.verdict_detail+'</li></ul></div>';
-        
-    q('pos-breakdown').innerHTML=bdHtml;
+    if(q('insp-accum-wrap')){
+      var acc=data.accumulators||(data.brokers||[]).filter(function(b){return (b.net_22d||0)>0;});
+      if(acc.length){
+        q('insp-accum-wrap').style.display='block';
+        q('insp-accum-brokers').innerHTML=renderTable(acc.slice(0,5),BROKER_COLS);
+        bindClicks(q('insp-accum-brokers'));
+      }else{
+        q('insp-accum-wrap').style.display='none';
+      }
+    }
+    
+    if(q('insp-dist-wrap')){
+      var dst=data.distributors||(data.brokers||[]).filter(function(b){return (b.net_22d||0)<0;}).sort(function(a,b){return (a.net_22d||0)-(b.net_22d||0);});
+      if(dst.length){
+        q('insp-dist-wrap').style.display='block';
+        q('insp-dist-brokers').innerHTML=renderTable(dst.slice(0,5),BROKER_COLS);
+        bindClicks(q('insp-dist-brokers'));
+      }else{
+        q('insp-dist-wrap').style.display='none';
+      }
+    }
+    
+    q('insp-recent').innerHTML=renderTable(data.recent,RECENT_COLS);
+    q('insp-brokers').innerHTML=renderTable(data.brokers,BROKER_COLS);
+    q('insp-signals').innerHTML=renderTable(data.signals,SIG_COLS);
+    
+    bindClicks(q('insp-recent'));
+    bindClicks(q('insp-brokers'));
+    bindClicks(q('insp-signals'));
+    loadLazyVerdicts('view-inspect');
   });
 }
-var RECENT_COLS=[{key:'trade_date',label:'Date',desc:'Trading session date'},{key:'close_price',label:'Close',type:'num',desc:'Session closing price in NRS'},{key:'change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change %'},{key:'qty',label:'Qty',type:'int',desc:'Total shares traded that session'},{key:'turnover',label:'Turnover',type:'num',desc:'Total session turnover in NRS'},{key:'rank',label:'Rank',desc:'Turnover rank across all traded symbols that day (1 = most traded)'}];
-var BROKER_COLS=[{key:'broker_id',label:'Broker',type:'broker',desc:'NEPSE broker ID (click to inspect broker)'},{key:'net_1d',label:'Net 1D',type:'int_flow',desc:'Net shares bought (+) or sold (-) on latest session'},{key:'net_5d',label:'Net 5D',type:'int_flow',desc:'Net shares bought (+) or sold (-) over last 5 sessions'},{key:'net_22d',label:'Net 22D',type:'int_flow',desc:'Net shares bought (+) or sold (-) over last 22 sessions (~1 month)'},{key:'net_66d',label:'Net 66D',type:'int_flow',desc:'Net shares bought (+) or sold (-) over last 66 sessions (~1 quarter)'},{key:'buy_vwap',label:'Buy VWAP',type:'num',desc:'Volume-weighted average buy price over the lookback'},{key:'margin_pct',label:'Margin %',type:'pct',desc:'Unrealized profit/loss margin vs latest close price'}];
-var SIG_COLS=[{key:'trade_date',label:'Date',desc:'Trading session date'},{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},{key:'verdict',label:'Verdict',type:'verdict_lazy',desc:'Long-only positional verdict (hover for breakdown)'},{key:'broker_id',label:'Broker',type:'broker',desc:'NEPSE broker ID (click to inspect)'},{key:'track',label:'Track',desc:'Screener track: TRACK_A (momentum) or TRACK_B (stealth accumulation)'},{key:'signal',label:'Signal',desc:'Signal classification triggered on this session'},{key:'turnover_rank',label:'Rank',desc:'Exchange-wide turnover rank on that session (1 = most traded)'},{key:'net_1d',label:'Net 1D',type:'int_flow',desc:'Net shares bought (+) or sold (-) on that session'},{key:'net_5d',label:'Net 5D',type:'int_flow',desc:'Net shares over 5 sessions up to that date'},{key:'net_22d',label:'Net 22D',type:'int_flow',desc:'Net shares over 22 sessions up to that date'},{key:'net_66d',label:'Net 66D',type:'int_flow',desc:'Net shares over 66 sessions up to that date'},{key:'margin_pct',label:'Margin %',type:'pct',desc:'Unrealized profit/loss margin vs that session close price'},{key:'t1_change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change %'}];
-function renderInspectHoldingsSnapshot(data){
-  var h22=data.top_holder_22d,d22=data.top_distributor_22d,h1=data.top_holder_1d,d1=data.top_distributor_1d;
-  if(!h22&&!d22&&!h1&&!d1)return '';
-  var rows=[];
-  if(h22)rows.push(['🏆 Top Accumulator (22D)','<a class="broker" data-broker="'+h22.broker_id+'">Broker '+h22.broker_id+'</a>','<span class="pos">+'+fmtInt(h22.net_22d)+' shares</span>',(h22.margin_pct!=null?'<span class="'+pctCls(h22.margin_pct)+'">'+pct(h22.margin_pct)+'</span>':'—')]);
-  if(d22)rows.push(['🔻 Top Distributor (22D)','<a class="broker" data-broker="'+d22.broker_id+'">Broker '+d22.broker_id+'</a>','<span class="neg">'+fmtInt(d22.net_22d)+' shares</span>',(d22.margin_pct!=null?'<span class="'+pctCls(d22.margin_pct)+'">'+pct(d22.margin_pct)+'</span>':'—')]);
-  if(h1)rows.push(['🟢 Top Buyer (1D)','<a class="broker" data-broker="'+h1.broker_id+'">Broker '+h1.broker_id+'</a>','<span class="pos">+'+fmtInt(h1.net_1d)+' shares</span>','—']);
-  if(d1)rows.push(['🔴 Top Seller (1D)','<a class="broker" data-broker="'+d1.broker_id+'">Broker '+d1.broker_id+'</a>','<span class="neg">'+fmtInt(d1.net_1d)+' shares</span>','—']);
-  var h='<table class="meta"><thead><tr><th>Role</th><th>Broker</th><th>Net Shares</th><th>Margin %</th></tr></thead><tbody>';
-  for(var i=0;i<rows.length;i++){
-    h+='<tr><th>'+rows[i][0]+'</th><td>'+rows[i][1]+'</td><td class="num">'+rows[i][2]+'</td><td class="num">'+rows[i][3]+'</td></tr>';
-  }
-  return h+'</tbody></table>';
+var MARKET_COLS=[{key:'symbol',label:'Symbol',type:'sym'},{key:'ltp',label:'Price',type:'num'},{key:'verdict',label:'Verdict'},{key:'score',label:'Score',type:'num'},{key:'top_accum',label:'Top Accumulator'},{key:'top_dist',label:'Top Distributor'},{key:'net_abs',label:'Absorption'},{key:'wash_pct',label:'Wash %',type:'pct'}];
+function loadMarket(){
+  q('market-out').innerHTML='<div class="empty">Scanning market... Please wait.</div>';
+  api('market').then(function(data){
+    if(!data || !data.market){ q('market-out').innerHTML='<div class="empty neg">Failed to load market data.</div>'; return; }
+    
+    var rows = data.market.map(function(item){
+      var ctx = item.context || {};
+      var bd = item.breakdown || {};
+      var accum = (ctx.top_buyer_broker ? 'Broker ' + ctx.top_buyer_broker : 'None');
+      var dist = (ctx.top_seller_broker ? 'Broker ' + ctx.top_seller_broker : 'None');
+      return {
+        symbol: item.symbol,
+        ltp: ctx.ltp,
+        verdict: bd.verdict,
+        score: bd.score,
+        top_accum: accum,
+        top_dist: dist,
+        net_abs: ctx.net_absorption_ratio + 'x',
+        wash_pct: ctx.wash_pct
+      };
+    });
+    
+    var sortedRows = rows.sort(function(a, b){
+      if(b.score !== a.score) return b.score - a.score;
+      return a.symbol.localeCompare(b.symbol);
+    });
+    
+    var h = '<div style="display:flex; flex-direction:column; gap:2rem;">';
+    
+    var groups = [
+      { name: 'Strong Buy', match: 'Strong Buy', cls: 'gainer' },
+      { name: 'Buy / Stealth', match: 'Buy', cls: 'stealth' },
+      { name: 'Hold / Neutral', match: 'Hold', cls: 'neutral' },
+      { name: 'Avoid / Distribution', match: 'Avoid', cls: 'loser' }
+    ];
+    
+    groups.forEach(function(g){
+      var filterRows = sortedRows.filter(function(r){
+        if(g.match === 'Buy') return r.verdict.indexOf('Buy') !== -1 && r.verdict.indexOf('Strong Buy') === -1;
+        return r.verdict.indexOf(g.match) !== -1;
+      });
+      if(filterRows.length > 0){
+        h += '<div><h4 style="margin-bottom:0.5rem;"><span class="badge ' + g.cls + '">' + g.name + ' (' + filterRows.length + ')</span></h4>';
+        h += renderTable(filterRows, MARKET_COLS);
+        h += '</div>';
+      }
+    });
+    h += '</div>';
+    
+    q('market-out').innerHTML = h;
+    bindClicks(q('market-out'));
+  });
 }
-function loadInspect(){var sym=val('insp-sym').trim().toUpperCase();if(!sym)return;api('inspect/'+sym+'?sessions='+(val('insp-sess')||22)).then(function(data){if(!data)return;q('recent-h').textContent='Daily History \u2014 '+sym;if(data.sector||data.cap_tier||data.fifty_two_week_high!=null||data.vwap!=null){q('insp-meta-wrap').style.display='block';q('insp-meta').innerHTML=renderInspectMeta(data);}else{q('insp-meta-wrap').style.display='none';}if(data.momentum){q('insp-mom-wrap').style.display='block';q('insp-mom').innerHTML=renderMomentumCard(data.momentum,5,22);bindClicks(q('insp-mom'));}else{q('insp-mom-wrap').style.display='none';}if(q('insp-snap-wrap')){var snapHtml=renderInspectHoldingsSnapshot(data);if(snapHtml){q('insp-snap-wrap').style.display='block';q('insp-snap').innerHTML=snapHtml;bindClicks(q('insp-snap'));}else{q('insp-snap-wrap').style.display='none';}}if(q('insp-accum-wrap')){var acc=data.accumulators||(data.brokers||[]).filter(function(b){return (b.net_22d||0)>0;});if(acc.length){q('insp-accum-wrap').style.display='block';q('insp-accum-brokers').innerHTML=renderTable(acc.slice(0,5),BROKER_COLS);bindClicks(q('insp-accum-brokers'));}else{q('insp-accum-wrap').style.display='none';}}if(q('insp-dist-wrap')){var dst=data.distributors||(data.brokers||[]).filter(function(b){return (b.net_22d||0)<0;}).sort(function(a,b){return (a.net_22d||0)-(b.net_22d||0);});if(dst.length){q('insp-dist-wrap').style.display='block';q('insp-dist-brokers').innerHTML=renderTable(dst.slice(0,5),BROKER_COLS);bindClicks(q('insp-dist-brokers'));}else{q('insp-dist-wrap').style.display='none';}}q('insp-recent').innerHTML=renderTable(data.recent,RECENT_COLS);q('insp-brokers').innerHTML=renderTable(data.brokers,BROKER_COLS);q('insp-signals').innerHTML=renderTable(data.signals,SIG_COLS);bindClicks(q('insp-recent'));bindClicks(q('insp-brokers'));bindClicks(q('insp-signals'));loadLazyVerdicts('view-inspect');});}
 var ANL_TIME_COLS=[{key:'trade_date',label:'Date',desc:'Trading session date'},{key:'rank',label:'Rank',desc:'Turnover rank that session; 1 = most traded on the whole exchange'},{key:'rank_pctile',label:'Rank %ile',type:'num',desc:'rank \u00f7 symbols traded that day; lower = busier'},{key:'close',label:'Close',type:'num',desc:'Session closing price'},{key:'change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change'},{key:'qty',label:'Qty',type:'int',desc:'Shares traded that session'},{key:'turnover',label:'Turnover',type:'num',desc:'NRS turnover that session'},{key:'top_accum_id',label:'Top Accum',type:'broker',desc:'Broker that net-bought the most that day (click to open the Broker tab)'},{key:'top_accum_net',label:'Top Net',type:'int',desc:"That broker's net buy in shares (buy \u2212 sell)"},{key:'net_breadth',label:'Breadth',type:'int',desc:'How many brokers were net buyers that session'},{key:'concentration',label:'Conc',type:'num',desc:"|top buyer's net| \u00f7 sum of all brokers' |nets|; low = no single dominant buyer"},{key:'sustained',label:'Sust',desc:'Is the top-accumulator broker the same as the previous session?'},{key:'signature',label:'Signature',desc:'Crowd type: MULTI = \u22653 net buyers \u00b7 SINGLE = 1 net buyer \u00b7 DISTRIBUTE = top netter sold \u00b7 NEUTRAL = unclear'},{key:'fwd_1',label:'T+1',type:'pct',desc:'Forward close-to-close return 1 session later'},{key:'fwd_3',label:'T+3',type:'pct',desc:'Forward close-to-close return 3 sessions later'}];
 var ANL_REL_COLS=[{key:'bucket',label:'Bucket',desc:"Turnover tier by rank %ile: LEADER = top 15%, MID = 15\u201350%, MINOR = the rest"},{key:'n',label:'N',type:'int',desc:'Number of sessions in the bucket'},{key:'t1_avg',label:'T+1 Avg %',type:'pct',desc:'Average close-to-close return 1 session later'},{key:'t1_win',label:'T+1 Win %',type:'pct',desc:'Share of sessions with a positive T+1 return'},{key:'t3_avg',label:'T+3 Avg %',type:'pct',desc:'Average close-to-close return 3 sessions later'},{key:'t3_win',label:'T+3 Win %',type:'pct',desc:'Share of sessions with a positive T+3 return'}];
 var ANL_SIG_COLS=[{key:'signature',label:'Signature',desc:'Crowd type: MULTI = \u22653 net buyers \u00b7 SINGLE = 1 \u00b7 DISTRIBUTE = top netter sold \u00b7 NEUTRAL = unclear'},{key:'n',label:'Sessions',type:'int',desc:'Number of sessions with this signature in the window'},{key:'t1_avg',label:'T+1 Avg %',type:'pct',desc:'Average close-to-close return 1 session later'},{key:'t1_win',label:'T+1 Win %',type:'pct',desc:'Share of sessions with a positive T+1 return'},{key:'t3_avg',label:'T+3 Avg %',type:'pct',desc:'Average close-to-close return 3 sessions later'},{key:'t3_win',label:'T+3 Win %',type:'pct',desc:'Share of sessions with a positive T+3 return'}];
