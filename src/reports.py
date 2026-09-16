@@ -274,6 +274,7 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
     <button data-view="inspect" title="Centralized single-stock dashboard: verdict, broker net flows, momentum, and signals.">Stock Central</button>
     <button data-view="market" title="Global view of all NEPSE stocks categorized by Buy/Hold/Sell/Avoid with broker details.">Market Overview</button>
     <button data-view="sectors" title="Sector Rotation Dashboard: Track macro capital flow across industries.">Sectors</button>
+    <button data-view="syndicates" title="Detect broker syndicates colluding to accumulate the same stocks.">Syndicates</button>
     <button data-view="broker" title="Broker holdings &amp; activity: multi-session net flows and accumulated symbols.">Broker</button>
     <button data-view="momentum" title="Turnover &amp; rank rotation: compare recent vs baseline liquidity shifts.">Momentum</button>
     <button data-view="wash" title="Internal broker matching: detect same-broker buy and sell cross-trades.">Wash</button>
@@ -379,6 +380,22 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   </div>
   <div class="block"><h3 id="sector-h">Sector Capital Flow Ranking</h3>
     <div id="sector-out" class="empty">Click "Load Sector Breakdown" to map capital rotation.</div>
+  </div>
+</section>
+
+<section class="view" id="view-syndicates">
+  <div class="view-intro">
+    <h2>Broker Syndicate Detection</h2>
+    <p>Network analysis identifying distinct brokers who hunt in packs, consistently co-accumulating the exact same stocks over the last 22 days.</p>
+    <div class="tips">
+      <span class="tag"><b>Co-occurrences</b>: The number of distinct stocks both brokers were top buyers in.</span>
+    </div>
+  </div>
+  <div class="controls">
+    <button onclick="loadSyndicate()">Detect Syndicates</button>
+  </div>
+  <div class="block"><h3>Identified Broker Packs (Last 22 Days)</h3>
+    <div id="syndicate-out" class="empty">Click "Detect Syndicates" to run network clustering.</div>
   </div>
 </section>
 
@@ -888,6 +905,25 @@ function loadSector(){
     h += '</div></div>';
     
     q('sector-out').innerHTML = h;
+  });
+}
+var SYNDICATE_COLS=[{key:'broker_a',label:'Broker A'},{key:'broker_b',label:'Broker B'},{key:'co_occurrences',label:'Co-accumulations',type:'int'},{key:'symbols',label:'Symbols Hunted Together'}];
+function loadSyndicate(){
+  q('syndicate-out').innerHTML='<div class="empty">Running clustering algorithm...</div>';
+  api('syndicate').then(function(data){
+    if(!data || !data.syndicates){ q('syndicate-out').innerHTML='<div class="empty neg">Failed to detect syndicates.</div>'; return; }
+    
+    var rows = data.syndicates.map(function(item){
+      return {
+        broker_a: '<a class="broker" data-broker="'+item.broker_a+'">Broker '+item.broker_a+'</a>',
+        broker_b: '<a class="broker" data-broker="'+item.broker_b+'">Broker '+item.broker_b+'</a>',
+        co_occurrences: item.co_occurrences,
+        symbols: item.symbols.join(', ')
+      };
+    });
+    
+    q('syndicate-out').innerHTML = renderTable(rows, SYNDICATE_COLS);
+    bindClicks(q('syndicate-out'));
   });
 }
 var ANL_TIME_COLS=[{key:'trade_date',label:'Date',desc:'Trading session date'},{key:'rank',label:'Rank',desc:'Turnover rank that session; 1 = most traded on the whole exchange'},{key:'rank_pctile',label:'Rank %ile',type:'num',desc:'rank \u00f7 symbols traded that day; lower = busier'},{key:'close',label:'Close',type:'num',desc:'Session closing price'},{key:'change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change'},{key:'qty',label:'Qty',type:'int',desc:'Shares traded that session'},{key:'turnover',label:'Turnover',type:'num',desc:'NRS turnover that session'},{key:'top_accum_id',label:'Top Accum',type:'broker',desc:'Broker that net-bought the most that day (click to open the Broker tab)'},{key:'top_accum_net',label:'Top Net',type:'int',desc:"That broker's net buy in shares (buy \u2212 sell)"},{key:'net_breadth',label:'Breadth',type:'int',desc:'How many brokers were net buyers that session'},{key:'concentration',label:'Conc',type:'num',desc:"|top buyer's net| \u00f7 sum of all brokers' |nets|; low = no single dominant buyer"},{key:'sustained',label:'Sust',desc:'Is the top-accumulator broker the same as the previous session?'},{key:'signature',label:'Signature',desc:'Crowd type: MULTI = \u22653 net buyers \u00b7 SINGLE = 1 net buyer \u00b7 DISTRIBUTE = top netter sold \u00b7 NEUTRAL = unclear'},{key:'fwd_1',label:'T+1',type:'pct',desc:'Forward close-to-close return 1 session later'},{key:'fwd_3',label:'T+3',type:'pct',desc:'Forward close-to-close return 3 sessions later'}];

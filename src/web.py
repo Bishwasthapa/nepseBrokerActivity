@@ -38,6 +38,7 @@ from src.screener import (
     screen_track_c_smart_money,
     market_overview,
     sector_overview,
+    detect_syndicates,
 )
 from src.watchlist import (
     add_note as watch_note,
@@ -287,6 +288,11 @@ class Handler(BaseHTTPRequestHandler):
         def run(conn):
             return {"sectors": sector_overview(conn)}
         return self._cached("sector", {}, run)
+
+    def api_syndicate(self, q):
+        def run(conn):
+            return {"syndicates": detect_syndicates(conn)}
+        return self._cached("syndicate", {}, run)
 
     def api_wash(self, q):
         as_of = _parse_date(_first(q, "as_of"))
@@ -558,6 +564,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(self.api_market(q))
                 elif command == "sector":
                     self._send_json(self.api_sector(q))
+                elif command == "syndicate":
+                    self._send_json(self.api_syndicate(q))
                 elif command == "smartmoney":
                     self._send_json(self.api_smartmoney(q))
                 elif command == "momentum":

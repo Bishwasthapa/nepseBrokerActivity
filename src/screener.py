@@ -1950,3 +1950,50 @@ def sector_overview(conn) -> list[dict]:
     
     return res
 
+def detect_syndicates(conn, window: int = 22) -> list[dict]:
+    """Identify broker pairs that co-accumulate the same stocks."""
+    import itertools
+    dates = fetch_trade_dates(conn)
+    if not dates:
+        return []
+    if len(dates) > window:
+        dates = dates[-window:]
+    
+    query = 'SELECT symbol, broker_id, (buy_qty - sell_qty) as net_qty FROM daily_broker_rollup WHERE trade_date >= %s'
+    df = pl.read_database(query=query, connection=conn, execute_options={'parameters': (dates[0],)})
+    
+    if df.is_empty():
+        return []
+        
+    agg_df = df.group_by(['symbol', 'broker_id']).agg(pl.col('net_qty').sum())
+    agg_df = agg_df.filter(pl.col('net_qty') > 0)
+    agg_df = agg_df.sort(['symbol', 'net_qty'], descending=[False, True])
+    
+    top3 = agg_df.group_by('symbol', maintain_order=True).head(3)
+    top3_dict = top3.group_by('symbol').agg(pl.col('broker_id').alias('brokers')).to_dicts()
+    
+    pair_counts = {}
+    pair_stocks = {}
+    
+    for row in top3_dict:
+        brokers = sorted(row['brokers'])
+        if len(brokers) >= 2:
+            for pair in itertools.combinations(brokers, 2):
+                pair_counts[pair] = pair_counts.get(pair, 0) + 1
+                if pair not in pair_stocks:
+                    pair_stocks[pair] = []
+                pair_stocks[pair].append(row['symbol'])
+                
+    sorted_pairs = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)
+    
+    results = []
+    for pair, count in sorted_pairs[:50]:
+        results.append({
+            'broker_a': pair[0],
+            'broker_b': pair[1],
+            'co_occurrences': count,
+            'symbols': pair_stocks[pair]
+        })
+        
+    return results
+
