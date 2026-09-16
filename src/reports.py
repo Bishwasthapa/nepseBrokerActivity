@@ -273,6 +273,7 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
     <button class="active" data-view="top" title="Top turnover ranking across the exchange for a given trading session.">Top Turnover</button>
     <button data-view="inspect" title="Centralized single-stock dashboard: verdict, broker net flows, momentum, and signals.">Stock Central</button>
     <button data-view="market" title="Global view of all NEPSE stocks categorized by Buy/Hold/Sell/Avoid with broker details.">Market Overview</button>
+    <button data-view="sectors" title="Sector Rotation Dashboard: Track macro capital flow across industries.">Sectors</button>
     <button data-view="broker" title="Broker holdings &amp; activity: multi-session net flows and accumulated symbols.">Broker</button>
     <button data-view="momentum" title="Turnover &amp; rank rotation: compare recent vs baseline liquidity shifts.">Momentum</button>
     <button data-view="wash" title="Internal broker matching: detect same-broker buy and sell cross-trades.">Wash</button>
@@ -361,6 +362,23 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   </div>
   <div class="block"><h3 id="market-h">Categorized Market Screener</h3>
     <div id="market-out" class="empty">Click "Load Global Scanner" to scan all active NEPSE stocks. (May take 5-10 seconds on first run of the day).</div>
+  </div>
+</section>
+
+<section class="view" id="view-sectors">
+  <div class="view-intro">
+    <h2>Sector Rotation Dashboard</h2>
+    <p>Track macro capital flows to spot which industries are absorbing the most liquidity and pulling the heaviest institutional accumulation.</p>
+    <div class="tips">
+      <span class="tag"><b>Sector Turnover</b>: Total volume flowing into the sector.</span>
+      <span class="tag"><b>Top Accumulator</b>: The broker with the heaviest net-buy footprint across all stocks in this sector.</span>
+    </div>
+  </div>
+  <div class="controls">
+    <button onclick="loadSector()">Load Sector Breakdown</button>
+  </div>
+  <div class="block"><h3 id="sector-h">Sector Capital Flow Ranking</h3>
+    <div id="sector-out" class="empty">Click "Load Sector Breakdown" to map capital rotation.</div>
   </div>
 </section>
 
@@ -846,6 +864,30 @@ function loadMarket(){
     
     q('market-out').innerHTML = h;
     bindClicks(q('market-out'));
+  });
+}
+var SECTOR_COLS=[{key:'sector',label:'Sector'},{key:'total_turnover',label:'Total Turnover (NRS)',type:'num'},{key:'avg_price_change',label:'Avg Change %',type:'pct'},{key:'num_stocks',label:'Active Stocks',type:'int'},{key:'top_accum',label:'Top Accumulator'}];
+function loadSector(){
+  q('sector-out').innerHTML='<div class="empty">Mapping sector rotation...</div>';
+  api('sector').then(function(data){
+    if(!data || !data.sectors){ q('sector-out').innerHTML='<div class="empty neg">Failed to load sector data.</div>'; return; }
+    
+    var rows = data.sectors.map(function(item){
+      return {
+        sector: item.sector,
+        total_turnover: item.total_turnover,
+        avg_price_change: item.avg_price_change,
+        num_stocks: item.num_stocks,
+        top_accum: (item.broker_id ? 'Broker ' + item.broker_id + ' <span class="pos">(+' + fmtInt(item.net_qty) + ')</span>' : 'None')
+      };
+    });
+    
+    var h = '<div style="display:flex; flex-direction:column; gap:2rem;">';
+    h += '<div><h4 style="margin-bottom:0.5rem;"><span class="badge neutral">Macro Flow Rankings</span></h4>';
+    h += renderTable(rows, SECTOR_COLS);
+    h += '</div></div>';
+    
+    q('sector-out').innerHTML = h;
   });
 }
 var ANL_TIME_COLS=[{key:'trade_date',label:'Date',desc:'Trading session date'},{key:'rank',label:'Rank',desc:'Turnover rank that session; 1 = most traded on the whole exchange'},{key:'rank_pctile',label:'Rank %ile',type:'num',desc:'rank \u00f7 symbols traded that day; lower = busier'},{key:'close',label:'Close',type:'num',desc:'Session closing price'},{key:'change_pct',label:'Change %',type:'pct',desc:'Session close-to-close price change'},{key:'qty',label:'Qty',type:'int',desc:'Shares traded that session'},{key:'turnover',label:'Turnover',type:'num',desc:'NRS turnover that session'},{key:'top_accum_id',label:'Top Accum',type:'broker',desc:'Broker that net-bought the most that day (click to open the Broker tab)'},{key:'top_accum_net',label:'Top Net',type:'int',desc:"That broker's net buy in shares (buy \u2212 sell)"},{key:'net_breadth',label:'Breadth',type:'int',desc:'How many brokers were net buyers that session'},{key:'concentration',label:'Conc',type:'num',desc:"|top buyer's net| \u00f7 sum of all brokers' |nets|; low = no single dominant buyer"},{key:'sustained',label:'Sust',desc:'Is the top-accumulator broker the same as the previous session?'},{key:'signature',label:'Signature',desc:'Crowd type: MULTI = \u22653 net buyers \u00b7 SINGLE = 1 net buyer \u00b7 DISTRIBUTE = top netter sold \u00b7 NEUTRAL = unclear'},{key:'fwd_1',label:'T+1',type:'pct',desc:'Forward close-to-close return 1 session later'},{key:'fwd_3',label:'T+3',type:'pct',desc:'Forward close-to-close return 3 sessions later'}];

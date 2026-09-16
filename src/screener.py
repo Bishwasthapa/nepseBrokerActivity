@@ -1909,3 +1909,44 @@ def market_overview() -> list:
         
     return [r for r in results if r]
 
+def sector_overview(conn) -> list[dict]:
+    """Aggregate turnover, price change, and top broker flow by sector."""
+    dates = fetch_trade_dates(conn)
+    if not dates:
+        return []
+    latest = dates[-1]
+    
+    query_market = 'SELECT symbol, sector, total_turnover, price_change_pct FROM daily_market_summary WHERE trade_date = %s'
+    market_df = pl.read_database(query=query_market, connection=conn, execute_options={'parameters': (latest,)})
+    
+    if market_df.is_empty():
+        return []
+        
+    query_broker = 'SELECT symbol, broker_id, (buy_qty - sell_qty) as net_qty FROM daily_broker_rollup WHERE trade_date = %s'
+    broker_df = pl.read_database(query=query_broker, connection=conn, execute_options={'parameters': (latest,)})
+    
+    if broker_df.is_empty():
+        return []
+        
+    joined = broker_df.join(market_df.select(['symbol', 'sector']), on='symbol', how='inner').drop_nulls('sector')
+    broker_sector = joined.group_by(['sector', 'broker_id']).agg(pl.col('net_qty').sum())
+    top_brokers = broker_sector.sort(['sector', 'net_qty'], descending=[False, True]).group_by('sector').first()
+    
+    market_stats = market_df.drop_nulls('sector').group_by('sector').agg([
+        pl.col('total_turnover').sum(),
+        pl.col('price_change_pct').mean().alias('avg_price_change'),
+        pl.count('symbol').alias('num_stocks')
+    ])
+    
+    final_df = market_stats.join(top_brokers, on='sector', how='left').sort('total_turnover', descending=True)
+    
+    # Convert Decimals and NaNs appropriately
+    res = final_df.to_dicts()
+    for row in res:
+        if row.get('total_turnover') is not None:
+            row['total_turnover'] = float(row['total_turnover'])
+        if row.get('avg_price_change') is not None:
+            row['avg_price_change'] = float(row['avg_price_change'])
+    
+    return res
+
