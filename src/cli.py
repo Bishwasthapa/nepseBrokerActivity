@@ -1650,6 +1650,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--host", type=str, default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     p_serve.add_argument("--port", type=int, default=8000, help="Listen port (default: 8000)")
     p_serve.set_defaults(func=cmd_serve)
+    
+    p_alert = sub.add_parser(
+        "alert",
+        help="Run daily Discord alert scan manually",
+    )
+    p_alert.set_defaults(func=cmd_alert)
 
     return parser
 
@@ -1736,6 +1742,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from src.web import serve
 
     serve(host=args.host, port=args.port)
+    return 0
+
+def cmd_alert(args: argparse.Namespace) -> int:
+    from src.alert_bot import run_daily_alerts
+    run_daily_alerts()
     return 0
 
 
