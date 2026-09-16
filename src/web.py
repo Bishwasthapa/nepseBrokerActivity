@@ -338,16 +338,28 @@ class Handler(BaseHTTPRequestHandler):
         sessions = _int(q, "sessions", 66)
         top = _int(q, "top", 5)
         params = {"broker_id": broker_id, "sessions": sessions, "top": top}
-        return self._cached(
-            "broker",
-            params,
-            lambda conn: {
+
+        def _fetch(conn):
+            all_holdings = broker_holdings(conn, broker_id, sessions)
+            accumulations = [h for h in all_holdings if h.get("net_t22", 0) > 0][:top]
+            dist_candidates = [
+                h for h in all_holdings
+                if h.get("net_t22", 0) < 0 or h.get("net_t1", 0) < 0 or h.get("net_t5", 0) < 0
+            ]
+            distributions = sorted(
+                dist_candidates,
+                key=lambda h: (h.get("net_t22", 0), h.get("net_t1", 0))
+            )[:top]
+            return {
                 "broker_id": broker_id,
                 "sessions": sessions,
                 "top": top,
-                "holdings": broker_holdings(conn, broker_id, sessions)[:top],
-            },
-        )
+                "holdings": all_holdings[:top],
+                "accumulations": accumulations,
+                "distributions": distributions,
+            }
+
+        return self._cached("broker", params, _fetch)
 
     def api_signals(self, q):
         from src.signals import current_streaks, load_signal_history, signal_performance

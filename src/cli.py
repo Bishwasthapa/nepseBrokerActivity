@@ -1142,35 +1142,77 @@ def render_broker(broker_id: int, holdings: list[dict], sessions: int, top: int)
         )
         return
 
-    table = Table(
-        title=f"Broker {broker_id} — Top {min(top, len(holdings))} Holdings (last {sessions} sessions)",
-        title_style="bold white",
-        header_style="bold yellow",
-        expand=True,
-    )
-    for col, justify in [
-        ("Rank", "right"),
-        ("Symbol", "left"),
-        ("Net T1", "right"),
-        ("Net T5", "right"),
-        ("Net T22", "right"),
-        ("Net T66", "right"),
-        ("Margin %", "right"),
-    ]:
-        table.add_column(col, justify=justify)
+    accumulations = [h for h in holdings if h.get("net_t22", 0) > 0][:top]
+    dist_candidates = [
+        h for h in holdings
+        if h.get("net_t22", 0) < 0 or h.get("net_t1", 0) < 0 or h.get("net_t5", 0) < 0
+    ]
+    distributions = sorted(
+        dist_candidates,
+        key=lambda h: (h.get("net_t22", 0), h.get("net_t1", 0))
+    )[:top]
 
-    for rank, h in enumerate(holdings[:top], 1):
-        table.add_row(
-            str(rank),
-            h["symbol"],
-            _fmt_num(h["net_t1"]),
-            _fmt_num(h["net_t5"]),
-            _fmt_num(h["net_t22"]),
-            _fmt_num(h["net_t66"]),
-            _fmt_pct(h["margin_pct"]),
+    if accumulations:
+        table = Table(
+            title=f"Broker {broker_id} — Top {min(top, len(accumulations))} Accumulations (Buying, last {sessions} sessions)",
+            title_style="bold white",
+            header_style="bold green",
+            expand=True,
         )
-    console.print(table)
-    console.print()
+        for col, justify in [
+            ("Rank", "right"),
+            ("Symbol", "left"),
+            ("Net T1", "right"),
+            ("Net T5", "right"),
+            ("Net T22", "right"),
+            ("Net T66", "right"),
+            ("Margin %", "right"),
+        ]:
+            table.add_column(col, justify=justify)
+
+        for rank, h in enumerate(accumulations, 1):
+            table.add_row(
+                str(rank),
+                h["symbol"],
+                _fmt_num(h["net_t1"]),
+                _fmt_num(h["net_t5"]),
+                _fmt_num(h["net_t22"]),
+                _fmt_num(h["net_t66"]),
+                _fmt_pct(h["margin_pct"]),
+            )
+        console.print(table)
+        console.print()
+
+    if distributions:
+        dist_table = Table(
+            title=f"Broker {broker_id} — Top {min(top, len(distributions))} Distributions (Selling / Dumping, last {sessions} sessions)",
+            title_style="bold white",
+            header_style="bold red",
+            expand=True,
+        )
+        for col, justify in [
+            ("Rank", "right"),
+            ("Symbol", "left"),
+            ("Net T1", "right"),
+            ("Net T5", "right"),
+            ("Net T22", "right"),
+            ("Net T66", "right"),
+            ("Margin %", "right"),
+        ]:
+            dist_table.add_column(col, justify=justify)
+
+        for rank, h in enumerate(distributions, 1):
+            dist_table.add_row(
+                str(rank),
+                h["symbol"],
+                _fmt_num(h["net_t1"]),
+                _fmt_num(h["net_t5"]),
+                _fmt_num(h["net_t22"]),
+                _fmt_num(h["net_t66"]),
+                _fmt_pct(h["margin_pct"]),
+            )
+        console.print(dist_table)
+        console.print()
 
     # Summary stats across the full (pre-truncation) holdings set.
     t1_buys = sum(h["net_t1"] for h in holdings if h["net_t1"] > 0)
