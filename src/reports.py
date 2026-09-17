@@ -488,16 +488,10 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   </div>
   <div class="controls" style="align-items: flex-end;">
     <fieldset style="border:1px solid var(--line);border-radius:6px;padding:0.4rem;display:flex;gap:0.6rem;margin:0;">
-      <legend style="color:var(--mut);font-size:0.75rem;padding:0 4px;">Radar Early Warning Windows</legend>
+      <legend style="color:var(--mut);font-size:0.75rem;padding:0 4px;">Radar Windows</legend>
       <label title="Fast recent window (default 3).">Fast Recent<input id="radar-fast-short" type="number" value="3" min="1" max="10"></label>
       <label title="Fast baseline window (default 10).">Fast Baseline<input id="radar-fast-base" type="number" value="10" min="1" max="50"></label>
       <label title="Minimum baseline average turnover (filters out dry microcaps).">Min Turnover (NRS)<input id="radar-fast-min" type="number" value="5000000" step="100000" style="width:110px;"></label>
-    </fieldset>
-
-    <fieldset style="border:1px solid var(--line);border-radius:6px;padding:0.4rem;display:flex;gap:0.6rem;margin:0;">
-      <legend style="color:var(--mut);font-size:0.75rem;padding:0 4px;">Standard Reference Windows</legend>
-      <label title="Number of recent trading sessions to measure.">Std Recent<input id="radar-short" type="number" value="5" min="1" max="50"></label>
-      <label title="Longer baseline reference window.">Std Baseline<input id="radar-base" type="number" value="22" min="1" max="100"></label>
     </fieldset>
 
     <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="radar-asof" class="dti" type="date" value="__LATEST_DATE__" style="width:130px;"></label>
@@ -1165,8 +1159,8 @@ function loadMomentum(){
   });
 }
 function loadRadar(){
-  var s=val('radar-short')||5;
-  var b=val('radar-base')||22;
+  var s=5;
+  var b=22;
   var fs=val('radar-fast-short')||3;
   var fb=val('radar-fast-base')||10;
   var minT=val('radar-fast-min')||5000000;
