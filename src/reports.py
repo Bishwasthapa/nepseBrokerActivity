@@ -287,6 +287,7 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
     <button data-view="backtest" title="Historical T+5 and T+20 Win Rate Backtester.">Backtester</button>
     <button data-view="broker" title="Broker holdings &amp; activity: multi-session net flows and accumulated symbols.">Broker</button>
     <button data-view="momentum" title="Turnover &amp; rank rotation: compare recent vs baseline liquidity shifts.">Momentum</button>
+    <button data-view="radar" title="Early Warning Institutional Accumulation &amp; Distribution Radars">Radars</button>
     <button data-view="wash" title="Internal broker matching: detect same-broker buy and sell cross-trades.">Wash</button>
     <button data-view="smartmoney" title="Track C: Playwright scraper + AI insights on smart money absorption.">Smart Money Alerts</button>
     <button data-view="run" title="Dual-track screener: Track A momentum and Track B stealth accumulation.">Full Scan</button>
@@ -456,21 +457,9 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   </div>
   <div class="controls" style="align-items: flex-end;">
     <label title="Optional: inspect a specific ticker's turnover momentum & find similar peer stocks.">Ticker (Optional)<input id="mom-sym" placeholder="e.g. GHL"></label>
+    <label title="Number of recent trading sessions to measure.">Std Recent<input id="mom-short" type="number" value="5" min="1" max="50"></label>
+    <label title="Longer baseline reference window.">Std Baseline<input id="mom-base" type="number" value="22" min="1" max="100"></label>
     <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="mom-asof" class="dti" type="date" value="__LATEST_DATE__" style="width:130px;"></label>
-    
-    <fieldset style="border:1px solid var(--line);border-radius:6px;padding:0.4rem;display:flex;gap:0.6rem;margin:0;">
-      <legend style="color:var(--mut);font-size:0.75rem;padding:0 4px;">Standard Scanner</legend>
-      <label title="Number of recent trading sessions to measure.">Std Recent<input id="mom-short" type="number" value="5" min="1" max="50"></label>
-      <label title="Longer baseline reference window.">Std Baseline<input id="mom-base" type="number" value="22" min="1" max="100"></label>
-    </fieldset>
-
-    <fieldset style="border:1px solid var(--line);border-radius:6px;padding:0.4rem;display:flex;gap:0.6rem;margin:0;">
-      <legend style="color:var(--mut);font-size:0.75rem;padding:0 4px;">Radar Early Warning</legend>
-      <label title="Fast recent window (default 3).">Fast Recent<input id="mom-fast-short" type="number" value="3" min="1" max="10"></label>
-      <label title="Fast baseline window (default 10).">Fast Baseline<input id="mom-fast-base" type="number" value="10" min="1" max="50"></label>
-      <label title="Minimum baseline average turnover (filters out dry microcaps).">Min Turnover (NRS)<input id="mom-fast-min" type="number" value="5000000" step="100000" style="width:110px;"></label>
-    </fieldset>
-
     <button onclick="loadMomentum()" style="margin-bottom:0.4rem;">Run</button>
   </div>
   <div class="block" id="mom-single-wrap" style="display:none"><h3>Symbol Momentum Diagnostic</h3><div id="mom-single"></div></div>
@@ -487,6 +476,33 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
       <div id="mom-los" class="empty"></div>
     </details>
   </div>
+</section>
+
+<section class="view" id="view-radar">
+  <div class="view-intro">
+    <h2>Institutional Accumulation &amp; Distribution Radars</h2>
+    <p>Early warning scanners that hunt for institutional footprints <em>before</em> a stock formally triggers a standard breakout or breakdown. Evaluates momentum acceleration/deceleration and multi-day broker persistence.</p>
+    <div class="tips">
+      <span class="tag"><b>Badges</b>: PRE_BREAKOUT_WATCH &middot; HIGH_CONVICTION &middot; EARLY_EXHAUSTION &middot; DISTRIBUTION_LOCK</span>
+    </div>
+  </div>
+  <div class="controls" style="align-items: flex-end;">
+    <fieldset style="border:1px solid var(--line);border-radius:6px;padding:0.4rem;display:flex;gap:0.6rem;margin:0;">
+      <legend style="color:var(--mut);font-size:0.75rem;padding:0 4px;">Radar Early Warning Windows</legend>
+      <label title="Fast recent window (default 3).">Fast Recent<input id="radar-fast-short" type="number" value="3" min="1" max="10"></label>
+      <label title="Fast baseline window (default 10).">Fast Baseline<input id="radar-fast-base" type="number" value="10" min="1" max="50"></label>
+      <label title="Minimum baseline average turnover (filters out dry microcaps).">Min Turnover (NRS)<input id="radar-fast-min" type="number" value="5000000" step="100000" style="width:110px;"></label>
+    </fieldset>
+
+    <fieldset style="border:1px solid var(--line);border-radius:6px;padding:0.4rem;display:flex;gap:0.6rem;margin:0;">
+      <legend style="color:var(--mut);font-size:0.75rem;padding:0 4px;">Standard Reference Windows</legend>
+      <label title="Number of recent trading sessions to measure.">Std Recent<input id="radar-short" type="number" value="5" min="1" max="50"></label>
+      <label title="Longer baseline reference window.">Std Baseline<input id="radar-base" type="number" value="22" min="1" max="100"></label>
+    </fieldset>
+
+    <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="radar-asof" class="dti" type="date" value="__LATEST_DATE__" style="width:130px;"></label>
+    <button onclick="loadRadar()" style="margin-bottom:0.4rem;">Run Radar</button>
+  </div>
   <div class="block" id="radar-wrap">
     <details open>
       <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px;">
@@ -498,7 +514,7 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
         <span class="tag"><b id="tip-f2">Factor 2 &mdash; Acceleration:</b> Fast ratio &gt; Std ratio (volume intensifying faster than trend)</span>
         <span class="tag"><b>Factor 3 &mdash; Broker Lock:</b> Same institutional broker holds top-buyer seat 2+ of last 3 sessions</span>
       </div>
-      <div id="mom-radar" class="empty">Run the Momentum sweep to activate the Accumulation Radar.</div>
+      <div id="mom-radar" class="empty">Click "Run Radar" to activate the Accumulation Radar.</div>
     </details>
   </div>
   <div class="block" id="radar-dist-wrap">
@@ -512,7 +528,7 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
         <span class="tag"><b id="tip-d2">Factor 2 &mdash; Deceleration:</b> Fast ratio &lt; Std ratio (volume dying faster than trend)</span>
         <span class="tag"><b>Factor 3 &mdash; Broker Dump:</b> Same institutional broker holds top-seller seat 2+ of last 3 sessions</span>
       </div>
-      <div id="mom-radar-dist" class="empty">Run the Momentum sweep to activate the Distribution Radar.</div>
+      <div id="mom-radar-dist" class="empty">Click "Run Radar" to activate the Distribution Radar.</div>
     </details>
   </div>
 </section>
@@ -1121,7 +1137,67 @@ var MOM_COLS=[{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol 
 var MOM_SIMILAR_COLS=[{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},{key:'verdict',label:'Verdict',type:'verdict_lazy',desc:'Long-only positional verdict (hover for breakdown)'},{key:'similarity_pct',label:'Match %',type:'pct_raw',desc:'Similarity score based on normalized momentum profile'},{key:'status',label:'Status',type:'badge',desc:'Standardized momentum state classification'},{key:'turnover_ratio',label:'Turnover Ratio',type:'num',desc:'Recent average daily turnover ÷ baseline average'},{key:'rank_drift',label:'Rank Drift',type:'num',desc:'Avg Base Rank − Avg Recent Rank (positive = climbed the board)'},{key:'avg_rank_short',label:'Avg Rank (Short)',type:'num',desc:'Average daily turnover rank over recent window'},{key:'price_change_pct_window',label:'Wnd Change %',type:'pct',desc:'Close price change % across recent window'},{key:'top_accumulator',label:'Top Accum',type:'broker',desc:'Broker with largest net buy in recent window'},{key:'top_distributor',label:'Top Distrib',type:'broker',desc:'Broker with largest net sell in recent window'}];
 var RADAR_COLS=[{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker (click to inspect)'},{key:'conviction',label:'Signal',type:'badge',desc:'PRE_BREAKOUT_WATCH (2/3) or HIGH_CONVICTION (3/3)'},{key:'score',label:'Score',type:'num',desc:'Number of factors triggered (max 3)'},{key:'fast_ratio',label:'Fast Ratio',type:'num',desc:'Fast avg turnover vs fast baseline — the heat indicator'},{key:'std_ratio',label:'Std Ratio',type:'num',desc:'Std avg turnover vs std baseline — the trend indicator'},{key:'fast_rank_drift',label:'Rank Drift',type:'num',desc:'Rank improvement in the fast window'},{key:'broker_streak',label:'Broker Streak',type:'num',desc:'How many of last 3 sessions the same broker was top buyer'},{key:'close',label:'Close',type:'num',desc:'Latest closing price'},{key:'price_change_pct_window',label:'Wnd Chg %',type:'pct',desc:'Price change across the recent window'},{key:'top_accumulator',label:'Top Accum',type:'broker',desc:'Top net-buyer broker in recent window'},{key:'top_distributor',label:'Top Distrib',type:'broker',desc:'Top net-seller broker in recent window'}];
 var DIST_COLS=[{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker (click to inspect)'},{key:'conviction',label:'Signal',type:'badge',desc:'EARLY_EXHAUSTION (2/3) or DISTRIBUTION_LOCK (3/3)'},{key:'score',label:'Score',type:'num',desc:'Number of factors triggered (max 3)'},{key:'fast_ratio',label:'Fast Ratio',type:'num',desc:'Fast avg turnover vs fast baseline — the cooling indicator'},{key:'std_ratio',label:'Std Ratio',type:'num',desc:'Std avg turnover vs std baseline — the trend indicator'},{key:'fast_rank_drift',label:'Rank Drift',type:'num',desc:'Rank drop in the fast window'},{key:'dist_streak',label:'Broker Dump Streak',type:'num',desc:'How many of last 3 sessions the same broker was top seller'},{key:'close',label:'Close',type:'num',desc:'Latest closing price'},{key:'price_change_pct_window',label:'Wnd Chg %',type:'pct',desc:'Price change across the recent window'},{key:'top_accumulator',label:'Top Accum',type:'broker',desc:'Top net-buyer broker in recent window'},{key:'top_distributor',label:'Top Distrib',type:'broker',desc:'Top net-seller broker in recent window'}];
-function loadMomentum(){var sym=(val('mom-sym')||'').trim().toUpperCase();var s=val('mom-short')||5;var b=val('mom-base')||22;var fs=val('mom-fast-short')||3;var fb=val('mom-fast-base')||10;var minT=val('mom-fast-min')||5000000;var asof=val('mom-asof');if(q('tip-f1'))q('tip-f1').innerHTML='Factor 1 &mdash; Fast Heat ('+fs+'v'+fb+'):';if(q('tip-f2'))q('tip-f2').innerHTML='Factor 2 &mdash; Acceleration ('+fs+'v'+fb+' vs '+s+'v'+b+'):';if(q('tip-d1'))q('tip-d1').innerHTML='Factor 1 &mdash; Fast Cooling ('+fs+'v'+fb+'):';if(q('tip-d2'))q('tip-d2').innerHTML='Factor 2 &mdash; Deceleration ('+fs+'v'+fb+' vs '+s+'v'+b+'):';var url='momentum?short='+s+'&base='+b+'&as_of='+asof;if(sym)url+='&symbol='+encodeURIComponent(sym);api(url).then(function(data){if(!data)return;if(sym&&data.symbol_momentum){q('mom-single-wrap').style.display='block';q('mom-single').innerHTML=renderMomentumCard(data.symbol_momentum,s,b);q('mom-similar-wrap').style.display='block';q('mom-similar').innerHTML=renderTable(data.similar,MOM_SIMILAR_COLS);bindClicks(q('mom-single'));bindClicks(q('mom-similar'));}else{q('mom-single-wrap').style.display='none';q('mom-similar-wrap').style.display='none';}q('mom-gain').innerHTML=renderTable(data.gainers,MOM_COLS);q('mom-los').innerHTML=renderTable(data.losers,MOM_COLS);bindClicks(q('mom-gain'));bindClicks(q('mom-los'));loadLazyVerdicts('view-momentum');});var pre_url='prebreakout?as_of='+asof+'&fast_short='+fs+'&fast_base='+fb+'&std_short='+s+'&std_base='+b+'&min_turnover='+minT;api(pre_url).then(function(data){if(!data)return;var rows=data.candidates||[];if(!rows.length){q('mom-radar').innerHTML='<div class="empty">No stocks currently meet the accumulation radar threshold.</div>';}else{q('mom-radar').innerHTML=renderTable(rows,RADAR_COLS);bindClicks(q('mom-radar'));loadLazyVerdicts('mom-radar');}var dist=data.dist_candidates||[];if(!dist.length){q('mom-radar-dist').innerHTML='<div class="empty">No stocks currently meet the distribution radar threshold.</div>';}else{q('mom-radar-dist').innerHTML=renderTable(dist,DIST_COLS);bindClicks(q('mom-radar-dist'));loadLazyVerdicts('mom-radar-dist');}});}
+function loadMomentum(){
+  var sym=(val('mom-sym')||'').trim().toUpperCase();
+  var s=val('mom-short')||5;
+  var b=val('mom-base')||22;
+  var asof=val('mom-asof');
+  var url='momentum?short='+s+'&base='+b+'&as_of='+asof;
+  if(sym)url+='&symbol='+encodeURIComponent(sym);
+  api(url).then(function(data){
+    if(!data)return;
+    if(sym&&data.symbol_momentum){
+      q('mom-single-wrap').style.display='block';
+      q('mom-single').innerHTML=renderMomentumCard(data.symbol_momentum,s,b);
+      q('mom-similar-wrap').style.display='block';
+      q('mom-similar').innerHTML=renderTable(data.similar,MOM_SIMILAR_COLS);
+      bindClicks(q('mom-single'));
+      bindClicks(q('mom-similar'));
+    }else{
+      q('mom-single-wrap').style.display='none';
+      q('mom-similar-wrap').style.display='none';
+    }
+    q('mom-gain').innerHTML=renderTable(data.gainers,MOM_COLS);
+    q('mom-los').innerHTML=renderTable(data.losers,MOM_COLS);
+    bindClicks(q('mom-gain'));
+    bindClicks(q('mom-los'));
+    loadLazyVerdicts('view-momentum');
+  });
+}
+function loadRadar(){
+  var s=val('radar-short')||5;
+  var b=val('radar-base')||22;
+  var fs=val('radar-fast-short')||3;
+  var fb=val('radar-fast-base')||10;
+  var minT=val('radar-fast-min')||5000000;
+  var asof=val('radar-asof');
+  
+  if(q('tip-f1'))q('tip-f1').innerHTML='Factor 1 &mdash; Fast Heat ('+fs+'v'+fb+'):';
+  if(q('tip-f2'))q('tip-f2').innerHTML='Factor 2 &mdash; Acceleration ('+fs+'v'+fb+' vs '+s+'v'+b+'):';
+  if(q('tip-d1'))q('tip-d1').innerHTML='Factor 1 &mdash; Fast Cooling ('+fs+'v'+fb+'):';
+  if(q('tip-d2'))q('tip-d2').innerHTML='Factor 2 &mdash; Deceleration ('+fs+'v'+fb+' vs '+s+'v'+b+'):';
+  
+  var pre_url='prebreakout?as_of='+asof+'&fast_short='+fs+'&fast_base='+fb+'&std_short='+s+'&std_base='+b+'&min_turnover='+minT;
+  api(pre_url).then(function(data){
+    if(!data)return;
+    var rows=data.candidates||[];
+    if(!rows.length){
+      q('mom-radar').innerHTML='<div class="empty">No stocks currently meet the accumulation radar threshold.</div>';
+    }else{
+      q('mom-radar').innerHTML=renderTable(rows,RADAR_COLS);
+      bindClicks(q('mom-radar'));
+      loadLazyVerdicts('mom-radar');
+    }
+    var dist=data.dist_candidates||[];
+    if(!dist.length){
+      q('mom-radar-dist').innerHTML='<div class="empty">No stocks currently meet the distribution radar threshold.</div>';
+    }else{
+      q('mom-radar-dist').innerHTML=renderTable(dist,DIST_COLS);
+      bindClicks(q('mom-radar-dist'));
+      loadLazyVerdicts('mom-radar-dist');
+    }
+  });
+}
 var WASH_BROKER=[{key:'broker_id',label:'Broker',type:'broker',desc:'NEPSE broker ID (click to inspect)'},{key:'buy_qty',label:'Buy',type:'int',desc:'Total shares bought by this broker'},{key:'sell_qty',label:'Sell',type:'int',desc:'Total shares sold by this broker'},{key:'matched_qty',label:'Matched',type:'int',desc:'Quantity matched internally (min(buy, sell))'},{key:'gross_volume',label:'Gross',type:'int',desc:'Total volume (buy + sell)'},{key:'match_pct',label:'Match %',type:'pct',desc:'Internal cross percentage (matched \u00d7 2 \u00f7 gross)'}];
 var WASH_SESSION=[{key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},{key:'verdict',label:'Verdict',type:'verdict_lazy',desc:'Long-only positional verdict (hover for breakdown)'},{key:'total_qty',label:'Total Qty',type:'int',desc:'Total shares traded across the exchange in lookback'},{key:'crossed_qty',label:'Crossed',type:'int',desc:'Total internally matched shares across all brokers'},{key:'session_match_pct',label:'Match %',type:'pct',desc:'Percentage of exchange volume internally crossed'}];
 function loadWash(){api('wash?window='+(val('wash-wnd')||22)+'&min_qty='+(val('wash-mq')||5000)+'&as_of='+val('wash-asof')).then(function(data){if(!data)return;q('wash-broker').innerHTML=renderTable(data.broker,WASH_BROKER);q('wash-session').innerHTML=renderTable(data.session,WASH_SESSION);bindClicks(q('wash-broker'));bindClicks(q('wash-session'));loadLazyVerdicts('wash-session');});}
