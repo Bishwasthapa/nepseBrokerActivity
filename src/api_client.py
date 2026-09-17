@@ -30,6 +30,7 @@ class SimpleRateLimiter:
             "default": 60,          # Default: 60 requests per minute
             "validation": 120,      # Validation endpoints: 120 per minute
             "market_data": 60,      # Market data: 60 per minute
+            "floorsheet": 300,      # Floorsheet data: 300 per minute
             "websocket": 100,       # WebSocket connections: 100 per minute
             "websocket_message": 50, # WebSocket messages: 50 per minute
             "health": 50,          # Health checks: 50 per minute (lowered for testing)
@@ -47,6 +48,8 @@ class SimpleRateLimiter:
             return "health"
         elif endpoint.startswith("/validate"):
             return "validation"
+        elif endpoint.startswith("/floorsheet"):
+            return "floorsheet"
         elif endpoint in ["/Summary", "/LiveMarket", "/PriceVolume", "/TopGainers", "/TopLosers"]:
             return "market_data"
         elif endpoint == "websocket_connection":

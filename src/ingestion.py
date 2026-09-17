@@ -28,6 +28,9 @@ def floorsheet_frame(rows: Iterable[dict] | pl.DataFrame) -> pl.DataFrame:
         df = rows
     else:
         df = pl.DataFrame(list(rows))
+    df = df.filter(
+        pl.col("buyer_broker").is_not_null() & pl.col("seller_broker").is_not_null()
+    )
     return df.select(
         pl.col("trade_date").cast(pl.Date),
         pl.col("contract_id").cast(pl.Int64),

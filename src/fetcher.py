@@ -71,7 +71,7 @@ def server_payload_id(scraper: NepseScraper) -> int:
     return payload_id
 
 
-def _fetch_page(scraper: NepseScraper, date_str: str, payload_id: int, page: int) -> dict:
+def _fetch_page(scraper: NepseScraper, date_str: str, payload_id: int, page: int) -> tuple[dict, int]:
     params = {
         "startDate": date_str,
         "endDate": date_str,
@@ -80,16 +80,28 @@ def _fetch_page(scraper: NepseScraper, date_str: str, payload_id: int, page: int
     }
     if page > 0:
         params["page"] = str(page)
-        
-    allowed, info = rate_limiter.is_allowed("local", "/floorsheet")
-    while not allowed:
-        time.sleep(0.5)
+
+    for attempt in range(3):
         allowed, info = rate_limiter.is_allowed("local", "/floorsheet")
-        
-    resp = scraper.session.post(
-        "/api/nots/nepse-data/floorsheet", params=params, payload={"id": payload_id}
-    )
-    return resp.json()
+        while not allowed:
+            time.sleep(0.5)
+            allowed, info = rate_limiter.is_allowed("local", "/floorsheet")
+
+        try:
+            resp = scraper.session.post(
+                "/api/nots/nepse-data/floorsheet", params=params, payload={"id": payload_id}
+            )
+            return resp.json(), payload_id
+        except Exception as e:
+            if attempt == 2:
+                raise
+            time.sleep(1)
+            try:
+                scraper.session._get_access_token()
+                payload_id = server_payload_id(scraper)
+            except Exception:
+                pass
+    return {}, payload_id
 
 
 def fetch_floorsheet_date(date_str: str) -> list[dict]:
@@ -101,7 +113,7 @@ def fetch_floorsheet_date(date_str: str) -> list[dict]:
     rows: list[dict] = []
     page = 0
     while True:
-        data = _fetch_page(scraper, date_str, payload_id, page)
+        data, payload_id = _fetch_page(scraper, date_str, payload_id, page)
         # With an oversized `size`, NEPSE may return a bare list instead of the
         # paginated dict wrapper; treat a non-dict (empty) as "no data here".
         floorsheets = data.get("floorsheets") or {} if isinstance(data, dict) else {}

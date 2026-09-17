@@ -27,6 +27,7 @@ services:
       - ./tests:/app/tests
       - ./data/real:/app/data/real
       - ./reports:/app/reports
+      - ./models:/app/models
     environment:
       DATABASE_URL: postgresql://quant:quantpass@db:5432/nepse_analytics
       PYTHONUNBUFFERED: "1"

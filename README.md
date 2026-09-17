@@ -618,3 +618,16 @@ floorsheet ──► daily_broker_rollup ──┐
   scenarios — `LEC` → Track A `SILENT_ACCUMULATION` (Broker 58 dominating),
   `HIDCL` → Track B stealth setup (Broker 41, absorption + fragmented selling +
   volume spike) — and is exercised by the automated tests.
+
+## Roadmap & Future Enhancements
+
+### 1. Broker-Window Profitability Matrix (Backtesting)
+A planned quantitative module (`src/ml/broker_backtest.py`) to answer: *"Which broker, trading which stock, under which accumulation window, generates the highest T+5 and T+20 yields?"* 
+- Maps top accumulators (e.g., Broker 58, 14, 94) to their optimal accumulation windows (e.g., 5D vs 22D baseline).
+- Outputs a backtested win-rate and yield matrix for high-conviction entries.
+
+### 2. Multi-Agent Data Pipeline
+Potential evolution of the pipeline using frameworks like `CrewAI` or `LangGraph` where specialized AI agents orchestrate the workflow:
+- **Data Engineer Agent:** Cleans daily PostgreSQL inputs.
+- **Modeler Agent:** Automatically retrains the XGBoost model to optimize forward probability windows.
+- **Critic Agent:** Reviews screener outputs against historical backtests to construct human-readable daily briefings.

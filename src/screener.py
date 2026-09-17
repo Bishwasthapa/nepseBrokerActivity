@@ -10,6 +10,7 @@ from src.db import get_conn
 from src.scraper import get_top_brokers_today
 from src.ai_insight import generate_broker_alert
 from src.notifier import send_alert
+from src.ml.predictor import predict_breakout_prob
 
 WINDOWS = {"T_1": 1, "T_5": 5, "T_22": 22, "T_66": 66}
 
@@ -30,7 +31,10 @@ def _is_excluded(symbol: str) -> bool:
     # Promoter stocks: ticker ends with 'P' (e.g. LECP, NABILP).
     if symbol.endswith("P"):
         return True
-    # Debentures: tickers embed a digit (e.g. H8020).
+    # Mutual funds: ticker ends with "F" (e.g. NIBLGF).
+    if symbol.endswith("F"):
+        return True
+    # Debentures / instruments: tickers embed a digit (e.g. H8020).
     if any(c.isdigit() for c in symbol):
         return True
     return False
@@ -453,6 +457,7 @@ def symbol_turnover_momentum(
         "percentile_turnover_ratio": ratio_pctile,
         "percentile_rank_drift": drift_pctile,
         "total_market_symbols": total_symbols,
+        "ai_confidence": predict_breakout_prob(r["turnover_ratio"], r["rank_drift"]) if r["turnover_ratio"] is not None and r["rank_drift"] is not None else None,
     }
 
 
@@ -978,6 +983,21 @@ def run_screener(
             rollup, summary, windows, top_turnover, top_holder_window, sector=sector, cap_tier=cap_tier
         )
         track_b = screen_track_b(rollup, summary, windows, sector=sector, cap_tier=cap_tier)
+        
+        try:
+            joined, _ = _compute_all_turnover_momentum(summary, 5, 22, rollup)
+            joined_dict = {r['symbol']: (r['turnover_ratio'], r['rank_drift']) for r in joined.iter_rows(named=True)}
+            
+            for row in track_a:
+                tr, rd = joined_dict.get(row['symbol'], (None, None))
+                row['ai_confidence'] = predict_breakout_prob(tr, rd) if tr is not None and rd is not None else None
+                
+            for row in track_b:
+                tr, rd = joined_dict.get(row['symbol'], (None, None))
+                row['ai_confidence'] = predict_breakout_prob(tr, rd) if tr is not None and rd is not None else None
+        except Exception:
+            pass
+
         t1 = windows["T_1"][-1] if windows["T_1"] else None
 
         persisted = 0

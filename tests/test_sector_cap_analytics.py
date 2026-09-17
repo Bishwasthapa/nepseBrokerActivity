@@ -538,3 +538,93 @@ class TestPositionAndSectors:
             assert ss["float_turnover_pct"] == round((50000 / 3000000) * 100, 2)
             assert ss["public_ratio_pct"] == 30.0
 
+
+    def test_fetch_page_retry_on_401(self, monkeypatch):
+        from src import fetcher
+
+        class DummySession:
+            def __init__(self):
+                self.calls = 0
+                self.refreshed = 0
+
+            def _get_access_token(self):
+                self.refreshed += 1
+
+            def post(self, url, params=None, payload=None):
+                self.calls += 1
+                if self.calls == 1:
+                    raise Exception("401 Client Error: Unauthorized")
+                resp_mock = mock.MagicMock()
+                resp_mock.json.return_value = {"floorsheets": {"content": [], "totalPages": 1}}
+                return resp_mock
+
+        dummy_scraper = mock.MagicMock()
+        dummy_session = DummySession()
+        dummy_scraper.session = dummy_session
+
+        monkeypatch.setattr(fetcher, "server_payload_id", lambda s: 9999)
+        monkeypatch.setattr(fetcher.rate_limiter, "is_allowed", lambda ip, ep: (True, {}))
+
+        data, pid = fetcher._fetch_page(dummy_scraper, "2026-09-16", 1234, 0)
+        assert dummy_session.calls == 2
+        assert dummy_session.refreshed == 1
+        assert pid == 9999
+        assert data == {"floorsheets": {"content": [], "totalPages": 1}}
+
+    def test_load_top_turnover_distinct_dates(self, monkeypatch):
+        from src import screener
+
+        d1 = date(2026, 9, 15)
+        d2 = date(2026, 9, 16)
+
+        class MockCursor:
+            def __init__(self):
+                self.query = ""
+                self.params = None
+
+            def execute(self, sql, params=None):
+                self.query = sql
+                self.params = params
+
+            def fetchone(self):
+                if "MAX(trade_date)" in self.query:
+                    return (d2,)
+                if "WHERE trade_date <=" in self.query:
+                    return (self.params[0],)
+                return None
+
+            def fetchall(self):
+                if self.params == (d1,):
+                    return [
+                        ("RSML", 2879.0, 2.0, 100000, 327007876.4, 1, "Manufacturing And Processing", 54701.0, 3000.0, 2000.0, 2850.0),
+                    ]
+                elif self.params == (d2,):
+                    return [
+                        ("HDHPC", 228.0, 5.3, 1500000, 379564213.9, 1, "Hydro Power", 6062.0, 250.0, 180.0, 225.0),
+                    ]
+                return []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        class MockConn:
+            def cursor(self):
+                return MockCursor()
+            def rollback(self):
+                pass
+
+        res_15 = screener.load_top_turnover(MockConn(), as_of=d1, limit=5)
+        res_16 = screener.load_top_turnover(MockConn(), as_of=d2, limit=5)
+
+        assert res_15["date"] == "2026-09-15"
+        assert res_15["rows"][0]["symbol"] == "RSML"
+        assert res_15["rows"][0]["turnover"] == 327007876.4
+
+        assert res_16["date"] == "2026-09-16"
+        assert res_16["rows"][0]["symbol"] == "HDHPC"
+        assert res_16["rows"][0]["turnover"] == 379564213.9
+        assert res_15["rows"][0]["turnover"] != res_16["rows"][0]["turnover"]
+

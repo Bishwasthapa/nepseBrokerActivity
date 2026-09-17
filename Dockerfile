@@ -14,6 +14,7 @@ RUN playwright install-deps chromium
 
 COPY src /app/src
 COPY tests /app/tests
+COPY models /app/models
 
 ENV PYTHONPATH=/app \
     PYTHONUNBUFFERED=1

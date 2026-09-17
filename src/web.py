@@ -145,9 +145,61 @@ class Handler(BaseHTTPRequestHandler):
         # keep the console readable
         print(f"[web] {self.address_string()} {fmt % args}")
 
+    def _validate_as_of(self, conn, as_of: date | None) -> tuple[date | None, dict | None]:
+        """
+        Ensures freshness if as_of is today/none, or validates historical date.
+        Returns (validated_as_of, market_closed_dict_or_None).
+        """
+        today = date.today()
+        try:
+            trade_dates = fetch_trade_dates(conn)
+        except Exception:
+            trade_dates = [as_of] if as_of else []
+        latest_date = trade_dates[-1] if trade_dates else None
+
+        if as_of is None or as_of == today:
+            if not trade_dates or today not in trade_dates:
+                try:
+                    from src.fetcher import fetch_today
+                    from src.ingestion import ingest_csv
+                    csv_path = fetch_today()
+                    if csv_path and csv_path.exists():
+                        ingested = ingest_csv(str(csv_path))
+                        if ingested.get("floorsheet", 0) == 0:
+                            # Incomplete data (e.g., fetched during market hours, missing broker IDs).
+                            # Delete the cached file so it can be re-fetched later when market closes.
+                            csv_path.unlink(missing_ok=True)
+                        else:
+                            trade_dates = fetch_trade_dates(conn)
+                            latest_date = trade_dates[-1] if trade_dates else None
+                except Exception as e:
+                    print(f"[web] Auto-fetch today failed: {e}")
+
+        if as_of is not None:
+            if trade_dates and as_of in trade_dates:
+                return as_of, None
+            else:
+                return None, {
+                    "market_closed": True,
+                    "requested_date": as_of.isoformat(),
+                    "latest_available": latest_date.isoformat() if latest_date else "none",
+                    "error": f"Market closed or no trading session on {as_of.isoformat()}. Latest available trading session is {(latest_date.isoformat() if latest_date else 'none')}."
+                }
+        else:
+            return latest_date, None
+
     # ---- API endpoints -----------------------------------------------------
     def api_top(self, q):
-        as_of = _parse_date(_first(q, "as_of"))
+        raw_as_of = _parse_date(_first(q, "as_of"))
+        conn = get_conn()
+        try:
+            as_of, closed_info = self._validate_as_of(conn, raw_as_of)
+            if closed_info:
+                self._send_json(closed_info)
+                return
+        finally:
+            conn.close()
+
         limit = _int(q, "limit", 20)
         sector = _first(q, "sector") or None
         cap_tier = _first(q, "cap_tier") or None
@@ -168,7 +220,16 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def api_run(self, q):
-        as_of = _parse_date(_first(q, "as_of"))
+        raw_as_of = _parse_date(_first(q, "as_of"))
+        conn = get_conn()
+        try:
+            as_of, closed_info = self._validate_as_of(conn, raw_as_of)
+            if closed_info:
+                self._send_json(closed_info)
+                return
+        finally:
+            conn.close()
+
         top = _int(q, "top", 20)
         window = _int(q, "top_holder_window", 22)
         no_persist = _bool(q, "no_persist", True)
@@ -198,7 +259,16 @@ class Handler(BaseHTTPRequestHandler):
         return self._cached("run", params, compute)
 
     def api_momentum(self, q):
-        as_of = _parse_date(_first(q, "as_of"))
+        raw_as_of = _parse_date(_first(q, "as_of"))
+        conn = get_conn()
+        try:
+            as_of, closed_info = self._validate_as_of(conn, raw_as_of)
+            if closed_info:
+                self._send_json(closed_info)
+                return
+        finally:
+            conn.close()
+
         short = _int(q, "short", 5)
         base = _int(q, "base", 22)
         sym = _first(q, "symbol")
@@ -266,7 +336,15 @@ class Handler(BaseHTTPRequestHandler):
         return self._cached("momentum", params, compute)
 
     def api_smartmoney(self, q):
-        as_of = _parse_date(_first(q, "as_of"))
+        raw_as_of = _parse_date(_first(q, "as_of"))
+        conn = get_conn()
+        try:
+            as_of, closed_info = self._validate_as_of(conn, raw_as_of)
+            if closed_info:
+                self._send_json(closed_info)
+                return
+        finally:
+            conn.close()
 
         def run(conn):
             all_dates = fetch_trade_dates(conn)
@@ -278,7 +356,7 @@ class Handler(BaseHTTPRequestHandler):
                 dates = all_dates
             return screen_track_c_smart_money(conn, dates)
 
-        return self._cached("smartmoney", {"as_of": as_of}, run)
+        return self._cached("smartmoney", {"as_of": as_of.isoformat() if as_of else None}, run)
 
     def api_market(self, q):
         def run(conn):
@@ -301,7 +379,16 @@ class Handler(BaseHTTPRequestHandler):
         return self._cached("backtest", {}, run)
 
     def api_wash(self, q):
-        as_of = _parse_date(_first(q, "as_of"))
+        raw_as_of = _parse_date(_first(q, "as_of"))
+        conn = get_conn()
+        try:
+            as_of, closed_info = self._validate_as_of(conn, raw_as_of)
+            if closed_info:
+                self._send_json(closed_info)
+                return
+        finally:
+            conn.close()
+
         window = _int(q, "window", 22)
         min_qty = _int(q, "min_qty", 5000)
         include_all = _bool(q, "all", False)

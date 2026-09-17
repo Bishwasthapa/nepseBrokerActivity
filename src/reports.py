@@ -645,7 +645,7 @@ function renderInspectMeta(d){
   for(var i=0;i<rows.length;i++)h+='<tr><th>'+rows[i][0]+'</th><td>'+rows[i][1]+'</td></tr>';
   return h+'</tbody></table>';
 }
-function renderMomentumCard(m,s,b){if(!m)return '<div class="empty">No momentum diagnostic available.</div>';var statusBadge=badgeHtml(m.status);var ratioTxt=(m.turnover_ratio!==null&&m.turnover_ratio!==undefined)?(m.turnover_ratio.toFixed(2)+'x'):'\u2014';if(m.percentile_turnover_ratio!==null&&m.percentile_turnover_ratio!==undefined){ratioTxt+=' <span class="mut">(Top '+(100.0-m.percentile_turnover_ratio).toFixed(1)+'% on NEPSE)</span>';}var driftTxt=(m.rank_drift!==null&&m.rank_drift!==undefined)?((m.rank_drift>0?'+':'')+m.rank_drift.toFixed(1)):'\u2014';if(m.percentile_rank_drift!==null&&m.percentile_rank_drift!==undefined){driftTxt+=' <span class="mut">(Top '+(100.0-m.percentile_rank_drift).toFixed(1)+'% drift)</span>';}var chgTxt=(m.price_change_pct_window!==null&&m.price_change_pct_window!==undefined)?((m.price_change_pct_window>0?'+':'')+m.price_change_pct_window.toFixed(2)+'%'):'\u2014';var closeTxt=(m.close!==null&&m.close!==undefined)?('NRS '+fmt(m.close)):'\u2014';var rows=[['Status',statusBadge],['Turnover Ratio ('+(s||5)+'D vs '+(b||22)+'D)',ratioTxt],['Daily Turnover (Mean)','Recent '+(s||5)+'D: '+(m.avg_turnover_short?('NRS '+fmt(m.avg_turnover_short)):'\u2014')+' | Baseline '+(b||22)+'D: '+(m.avg_turnover_base?('NRS '+fmt(m.avg_turnover_base)):'\u2014')],['Turnover Rank Progression','Baseline #'+m.avg_rank_base+' \u2192 Recent #'+m.avg_rank_short+' (Drift: '+driftTxt+')'],['Recent Window \u0394% / Close','<span class="'+pctCls(m.price_change_pct_window)+'">'+chgTxt+'</span> | '+closeTxt],['Dominant Brokers','Accumulator (Buyer): '+(m.top_accumulator?'<a class="broker" data-broker="'+m.top_accumulator+'">'+m.top_accumulator+'</a>':'\u2014')+' | Distributor (Seller): '+(m.top_distributor?'<a class="broker" data-broker="'+m.top_distributor+'">'+m.top_distributor+'</a>':'\u2014')]];var h='<table class="meta"><tbody>';for(var i=0;i<rows.length;i++)h+='<tr><th>'+rows[i][0]+'</th><td>'+rows[i][1]+'</td></tr>';return h+'</tbody></table>';}
+function renderMomentumCard(m,s,b){if(!m)return '<div class="empty">No momentum diagnostic available.</div>';var statusBadge=badgeHtml(m.status);var ratioTxt=(m.turnover_ratio!==null&&m.turnover_ratio!==undefined)?(m.turnover_ratio.toFixed(2)+'x'):'\u2014';if(m.percentile_turnover_ratio!==null&&m.percentile_turnover_ratio!==undefined){ratioTxt+=' <span class="mut">(Top '+(100.0-m.percentile_turnover_ratio).toFixed(1)+'% on NEPSE)</span>';}var driftTxt=(m.rank_drift!==null&&m.rank_drift!==undefined)?((m.rank_drift>0?'+':'')+m.rank_drift.toFixed(1)):'\u2014';if(m.percentile_rank_drift!==null&&m.percentile_rank_drift!==undefined){driftTxt+=' <span class="mut">(Top '+(100.0-m.percentile_rank_drift).toFixed(1)+'% drift)</span>';}var chgTxt=(m.price_change_pct_window!==null&&m.price_change_pct_window!==undefined)?((m.price_change_pct_window>0?'+':'')+m.price_change_pct_window.toFixed(2)+'%'):'\u2014';var closeTxt=(m.close!==null&&m.close!==undefined)?('NRS '+fmt(m.close)):'\u2014';var aiScoreTxt='\u2014';if(m.ai_confidence!==null&&m.ai_confidence!==undefined){var p=m.ai_confidence*100;var bCls=(p>70)?'gainer':(p>40?'stealth':'neutral');aiScoreTxt='<span class="badge '+bCls+'" style="font-weight:bold; font-size: 1.1em;">'+p.toFixed(1)+'% Breakout Probability</span>';}var rows=[['Status',statusBadge],['AI Confidence Score',aiScoreTxt],['Turnover Ratio ('+(s||5)+'D vs '+(b||22)+'D)',ratioTxt],['Daily Turnover (Mean)','Recent '+(s||5)+'D: '+(m.avg_turnover_short?('NRS '+fmt(m.avg_turnover_short)):'\u2014')+' | Baseline '+(b||22)+'D: '+(m.avg_turnover_base?('NRS '+fmt(m.avg_turnover_base)):'\u2014')],['Turnover Rank Progression','Baseline #'+m.avg_rank_base+' \u2192 Recent #'+m.avg_rank_short+' (Drift: '+driftTxt+')'],['Recent Window \u0394% / Close','<span class="'+pctCls(m.price_change_pct_window)+'">'+chgTxt+'</span> | '+closeTxt],['Dominant Brokers','Accumulator (Buyer): '+(m.top_accumulator?'<a class="broker" data-broker="'+m.top_accumulator+'">'+m.top_accumulator+'</a>':'\u2014')+' | Distributor (Seller): '+(m.top_distributor?'<a class="broker" data-broker="'+m.top_distributor+'">'+m.top_distributor+'</a>':'\u2014')]];var h='<table class="meta"><tbody>';for(var i=0;i<rows.length;i++)h+='<tr><th>'+rows[i][0]+'</th><td>'+rows[i][1]+'</td></tr>';return h+'</tbody></table>';}
 
 function renderTable(rows,cols){if(!rows||!rows.length)return '<div class="empty">No data.</div>';
 var h='<table><thead><tr>';for(var i=0;i<cols.length;i++){
@@ -659,6 +659,7 @@ else if(c.type==='int'){cls+=' num text-right';td=fmtInt(v);}
 else if(c.type==='int_flow'){cls+=' num text-right '+pctCls(v);td=(v>0?'+':'')+fmtInt(v);}
 else if(c.type==='pct'){cls+=' num text-right '+pctCls(v);td=pct(v);}
 else if(c.type==='pct_raw'){cls+=' num text-right';td=(v===null||v===undefined)?'\u2014':Number(v).toFixed(1)+'%';}
+else if(c.type==='ai_score'){cls+=' text-center';if(v===null||v===undefined){td='\u2014';}else{var p=v*100;var bCls=(p>70)?'gainer':(p>40?'stealth':'neutral');td='<span class="badge '+bCls+'" style="font-weight:bold">'+p.toFixed(1)+'%</span>';}}
 else if(c.type==='badge'){cls+=' text-center';td=badgeHtml(v);}
 else if(c.type==='cap'){cls+=' text-center';td=capBadgeHtml(v);}
 else if(c.type==='sec'){cls+=' text-center';td=secBadgeHtml(v);}
@@ -676,7 +677,23 @@ var b=e.target.closest('a[data-broker]');if(b){q('brok-id').value=b.dataset.brok
 var c=e.target.closest('a[data-cap]');if(c){var capVal=c.dataset.cap;if(q('top-cap'))q('top-cap').value=capVal;if(q('run-cap'))q('run-cap').value=capVal;updateTab('top');loadTop();return;}
 var sec=e.target.closest('a[data-sec]');if(sec){var secVal=sec.dataset.sec;if(q('top-sector'))q('top-sector').value=secVal;if(q('run-sector'))q('run-sector').value=secVal;updateTab('top');loadTop();return;}
 });}
-function api(path){setStatus('Loading '+path+'\u2026');busy(true);return fetch('/api/'+path).then(function(r){if(!r.ok){return r.json().catch(function(){return {error:'HTTP '+r.status};}).then(function(err){throw new Error((err&&err.error)?err.error:('HTTP '+r.status));});}return r.json();}).then(function(j){setStatus((j.cached?'cached: ':'computed: ')+path);return j.data;}).catch(function(e){setStatus('Error: '+e.message);return null;}).finally(function(){busy(false);});}
+function showMarketClosedBanner(j){
+  var b = q('market-banner');
+  if(!b){
+    b = document.createElement('div');
+    b.id = 'market-banner';
+    b.style.cssText = 'background:#fff3cd; color:#856404; padding:10px 15px; margin:10px 0; border:1px solid #ffeeba; border-radius:4px; font-weight:bold;';
+    var header = document.querySelector('header') || document.body;
+    header.parentNode.insertBefore(b, header.nextSibling);
+  }
+  b.textContent = 'Market Closed / No Trading Session on ' + j.requested_date + ' \u2014 Latest available trading session is ' + j.latest_available + '.';
+  b.style.display = 'block';
+}
+function hideMarketClosedBanner(){
+  var b = q('market-banner');
+  if(b) b.style.display = 'none';
+}
+function api(path){setStatus('Loading '+path+'\u2026');busy(true);return fetch('/api/'+path).then(function(r){if(!r.ok){return r.json().catch(function(){return {error:'HTTP '+r.status};}).then(function(err){throw new Error((err&&err.error)?err.error:('HTTP '+r.status));});}return r.json();}).then(function(j){if(j.market_closed){setStatus('Market Closed on '+j.requested_date+' (Latest: '+j.latest_available+')');showMarketClosedBanner(j);return null;}hideMarketClosedBanner();setStatus((j.cached?'cached: ':'computed: ')+path);return j.data;}).catch(function(e){setStatus('Error: '+e.message);return null;}).finally(function(){busy(false);});}
 var TOP_COLS=[
   {key:'rank',label:'Rank',desc:'Turnover rank across the exchange (1 = highest turnover)'},
   {key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol (click to inspect)'},
@@ -729,6 +746,39 @@ function loadTop(){
     loadLazyVerdicts('top-out');
   });
 }
+var RECENT_COLS=[
+  {key:'trade_date',label:'Date',desc:'Trading session date'},
+  {key:'close_price',label:'Close',type:'num',desc:'Session closing price in NRS'},
+  {key:'change_pct',label:'Δ%',type:'pct',desc:'Session price change %'},
+  {key:'qty',label:'Qty',type:'int',desc:'Total shares traded'},
+  {key:'turnover',label:'Turnover',type:'num',desc:'Session turnover in NRS'},
+  {key:'rank',label:'Rank',type:'num',desc:'Turnover rank (1 = most traded)'}
+];
+var BROKER_COLS=[
+  {key:'broker_id',label:'Broker',type:'broker',desc:'NEPSE broker ID (click to inspect)'},
+  {key:'net_1d',label:'Net 1D',type:'int_flow',desc:'Net shares bought (+) or sold (-) on latest session'},
+  {key:'net_5d',label:'Net 5D',type:'int_flow',desc:'Net shares bought (+) or sold (-) over 5 sessions'},
+  {key:'net_22d',label:'Net 22D',type:'int_flow',desc:'Net shares bought (+) or sold (-) over 22 sessions'},
+  {key:'net_66d',label:'Net 66D',type:'int_flow',desc:'Net shares bought (+) or sold (-) over 66 sessions'},
+  {key:'buy_vwap',label:'Buy VWAP',type:'num',desc:'Broker volume-weighted average buy price'},
+  {key:'close',label:'Close',type:'num',desc:'Latest session closing price'},
+  {key:'margin_pct',label:'Margin %',type:'pct',desc:'Broker unrealized profit/loss margin %'}
+];
+var SIG_COLS=[
+  {key:'trade_date',label:'Date',desc:'Signal occurrence date'},
+  {key:'symbol',label:'Symbol',type:'sym',desc:'NEPSE ticker symbol'},
+  {key:'broker_id',label:'Broker',type:'broker',desc:'Broker ID'},
+  {key:'track',label:'Track',desc:'Detection track'},
+  {key:'signal',label:'Signal',desc:'Signal classification'},
+  {key:'turnover_rank',label:'Rank',type:'num',desc:'Turnover rank that session'},
+  {key:'net_1d',label:'Net 1D',type:'int_flow',desc:'Net shares 1D'},
+  {key:'net_5d',label:'Net 5D',type:'int_flow',desc:'Net shares 5D'},
+  {key:'net_22d',label:'Net 22D',type:'int_flow',desc:'Net shares 22D'},
+  {key:'net_66d',label:'Net 66D',type:'int_flow',desc:'Net shares 66D'},
+  {key:'margin_pct',label:'Margin %',type:'pct',desc:'Margin %'},
+  {key:'t1_change_pct',label:'T+1 Δ%',type:'pct',desc:'Forward T+1 price change %'}
+];
+
 function loadInspect() {
   var sym = val('insp-sym').trim().toUpperCase();
   if(!sym) return;
@@ -804,12 +854,21 @@ function loadInspect() {
     }
     
     if(q('insp-snap-wrap')){
-      var snapHtml=renderInspectHoldingsSnapshot(data);
-      if(snapHtml){
-        q('insp-snap-wrap').style.display='block';
-        q('insp-snap').innerHTML=snapHtml;
-        bindClicks(q('insp-snap'));
-      }else{
+      try {
+        if (typeof renderInspectHoldingsSnapshot === 'function') {
+          var snapHtml=renderInspectHoldingsSnapshot(data);
+          if(snapHtml){
+            q('insp-snap-wrap').style.display='block';
+            q('insp-snap').innerHTML=snapHtml;
+            bindClicks(q('insp-snap'));
+          }else{
+            q('insp-snap-wrap').style.display='none';
+          }
+        } else {
+          q('insp-snap-wrap').style.display='none';
+        }
+      } catch (e) {
+        console.error('Error rendering snapshot:', e);
         q('insp-snap-wrap').style.display='none';
       }
     }
@@ -851,6 +910,11 @@ function loadMarket(){
   q('market-out').innerHTML='<div class="empty">Scanning market... Please wait.</div>';
   api('market').then(function(data){
     if(!data || !data.market){ q('market-out').innerHTML='<div class="empty neg">Failed to load market data.</div>'; return; }
+    
+    var latest_date = data.market.length > 0 ? data.market[0].trade_date : null;
+    if(latest_date) {
+      q('market-h').innerHTML = 'Categorized Market Screener <span class="badge neutral" style="margin-left:10px;">Data as of ' + latest_date + '</span>';
+    }
     
     var rows = data.market.map(function(item){
       var ctx = item.context || {};
@@ -982,6 +1046,7 @@ var TRACK_A_COLS=[
   {key:'net_t22',label:'Net T22',type:'int',desc:'Net shares bought (+) or sold (-) over last 22 sessions'},
   {key:'net_t66',label:'Net T66',type:'int',desc:'Net shares bought (+) or sold (-) over last 66 sessions'},
   {key:'margin_pct',label:'Margin %',type:'pct',desc:'Top buyer unrealized margin % vs current close'},
+  {key:'ai_confidence',label:'AI Score',type:'ai_score',desc:'ML probability of breakout (>3% in 5 days)'},
   {key:'t1_turnover',label:'T1 Turnover',type:'num',desc:'Latest session turnover in NRS'}
 ];
 var TRACK_B_COLS=[
@@ -997,7 +1062,8 @@ var TRACK_B_COLS=[
   {key:'dispersion_pct',label:'Dispers %',type:'pct',desc:'Selling dispersion across top 3 sellers'},
   {key:'t22_price_change_pct',label:'22D Δ%',type:'pct',desc:'Price change % over the 22-session accumulation window'},
   {key:'volume_inflection',label:'Vol Inflect',type:'num',desc:'5-day average volume ÷ 22-day average volume'},
-  {key:'margin_pct',label:'Margin %',type:'pct',desc:'Broker unrealized profit/loss margin % vs current close'}
+  {key:'margin_pct',label:'Margin %',type:'pct',desc:'Broker unrealized profit/loss margin % vs current close'},
+  {key:'ai_confidence',label:'AI Score',type:'ai_score',desc:'ML probability of breakout (>3% in 5 days)'}
 ];
 
 function loadSmartmoney(){
