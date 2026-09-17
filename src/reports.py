@@ -463,8 +463,18 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   <button onclick="loadMomentum()">Run</button></div>
   <div class="block" id="mom-single-wrap" style="display:none"><h3>Symbol Momentum Diagnostic</h3><div id="mom-single"></div></div>
   <div class="block" id="mom-similar-wrap" style="display:none"><h3>Similar Momentum Profiles (Nearest Peers)</h3><div id="mom-similar"></div></div>
-  <div class="block"><h3>Gainers &mdash; climbing the board</h3><div id="mom-gain" class="empty">Compares recent vs baseline turnover to find structural activity shifts.</div></div>
-  <div class="block"><h3>Losers &mdash; fading activity</h3><div id="mom-los" class="empty"></div></div>
+  <div class="block">
+    <details open>
+      <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px;">Gainers &mdash; climbing the board</summary>
+      <div id="mom-gain" class="empty">Compares recent vs baseline turnover to find structural activity shifts.</div>
+    </details>
+  </div>
+  <div class="block">
+    <details open>
+      <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px;">Losers &mdash; fading activity</summary>
+      <div id="mom-los" class="empty"></div>
+    </details>
+  </div>
   <div class="block" id="radar-wrap">
     <details open>
       <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px;">
@@ -641,7 +651,7 @@ function updateTab(name){showTab(name);window.scrollTo({top:0,behavior:'smooth'}
 function setStatus(m){q('status-msg').textContent=m;}
 var _busy=0;
 function busy(on){_busy+=on?1:-1;if(_busy<0)_busy=0;var s=q('spin');if(s)s.className='spin'+(_busy>0?'':' hidden');}
-function badgeHtml(st){if(!st)return'\u2014';var cls='neutral';if(st==='MOMENTUM_GAINER')cls='gainer';else if(st==='STEALTH_BUILDING')cls='stealth';else if(st==='HIGH_VOLUME_STABLE')cls='stable';else if(st==='MOMENTUM_LOSER')cls='loser';else if(st==='LIQUIDITY_FADING')cls='fading';else if(st==='HIGH_CONVICTION')cls='gainer';else if(st==='PRE_BREAKOUT_WATCH')cls='stealth';return '<span class="badge '+cls+'">'+st+'</span>';}
+function badgeHtml(st){if(!st)return'\u2014';var cls='neutral';var tip='';if(st==='MOMENTUM_GAINER'){cls='gainer';tip='Full breakout: High relative volume and climbing ranks.';}else if(st==='STEALTH_BUILDING'){cls='stealth';tip='Accumulation: Volume steadily expanding under the radar.';}else if(st==='HIGH_VOLUME_STABLE'){cls='stable';tip='Elevated volume but rank is relatively flat.';}else if(st==='MOMENTUM_LOSER'){cls='loser';tip='Activity fading: Dropping rapidly down the liquidity board.';}else if(st==='LIQUIDITY_FADING'){cls='fading';tip='Volume is drying up relative to the baseline.';}else if(st==='HIGH_CONVICTION'){cls='gainer';tip='Early Warning (3/3): Fast volume accelerating with consistent broker accumulation.';}else if(st==='PRE_BREAKOUT_WATCH'){cls='stealth';tip='Early Warning (2/3): Fast volume heating up before standard breakout.';}return '<span class="badge '+cls+'" title="'+tip+'">'+st+'</span>';}
 function capBadgeHtml(cap){if(!cap||cap==='UNKNOWN')return '<span class="badge neutral" title="Market cap unclassified">\u2014</span>';var cls='small';if(cap==='LARGE')cls='large';else if(cap==='MID')cls='mid';return '<a class="badge '+cls+'" data-cap="'+cap+'" title="Filter by '+cap+' cap tier">'+cap+'</a>';}
 function secBadgeHtml(sec){if(!sec)return '\u2014';return '<a class="badge sec" data-sec="'+sec+'" title="Filter by '+sec+' sector">'+sec+'</a>';}
 function renderInspectMeta(d){
