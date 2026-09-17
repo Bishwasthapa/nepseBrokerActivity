@@ -600,14 +600,16 @@ def screen_turnover_momentum(
                     "price_change_pct_window": r["price_change_pct_window"],
                     "top_accumulator": acc,
                     "top_distributor": dist,
+                    "status": classify_momentum_status(
+                        r["avg_rank_short"], r["avg_rank_base"], r["rank_drift"], r["turnover_ratio"]
+                    ),
                 }
             )
         return rows
 
     gainers = joined.filter(
-        (pl.col("avg_rank_short") <= 50)
-        & (pl.col("rank_drift") >= 15)
-        & (pl.col("turnover_ratio") >= 1.75)
+        (pl.col("turnover_ratio") >= 1.25)
+        & (pl.col("rank_drift") >= 5)
     ).sort("rank_drift", descending=True)
 
     losers = joined.filter(
