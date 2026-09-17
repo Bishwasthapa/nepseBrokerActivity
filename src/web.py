@@ -338,6 +338,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_prebreakout(self, q):
         raw_as_of = _parse_date(_first(q, "as_of"))
+        fast_short = int(_first(q, "fast_short") or 3)
+        fast_base = int(_first(q, "fast_base") or 10)
+        std_short = int(_first(q, "std_short") or 5)
+        std_base = int(_first(q, "std_base") or 22)
+
         conn = get_conn()
         try:
             as_of, closed_info = self._validate_as_of(conn, raw_as_of)
@@ -347,13 +352,22 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
-        params = {"as_of": as_of.isoformat() if as_of else None}
+        params = {
+            "as_of": as_of.isoformat() if as_of else None,
+            "fast_short": fast_short,
+            "fast_base": fast_base,
+            "std_short": std_short,
+            "std_base": std_base,
+        }
 
         def compute(conn):
             dates = fetch_trade_dates(conn)
             if as_of is not None:
                 dates = [d for d in dates if d <= as_of]
-            needed = dates[-22:]  # 22 days enough for 5v22 and 3v10
+            
+            max_lookback = max(fast_base, std_base)
+            needed = dates[-max_lookback:]
+            
             summary = load_summary(conn, needed)
             rollup = load_rollup(conn, needed)
             if not summary.is_empty():
@@ -371,7 +385,7 @@ class Handler(BaseHTTPRequestHandler):
                     pl.col("buy_amount").cast(pl.Float64),
                     pl.col("sell_amount").cast(pl.Float64),
                 )
-            candidates = screen_prebreakout(summary, rollup)
+            candidates = screen_prebreakout(summary, rollup, fast_short, fast_base, std_short, std_base)
             return {"candidates": candidates, "trade_date": as_of.isoformat() if as_of else (dates[-1].isoformat() if dates else None)}
 
         return self._cached("prebreakout", params, compute)

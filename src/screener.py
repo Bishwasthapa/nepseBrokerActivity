@@ -626,6 +626,10 @@ def screen_turnover_momentum(
 def screen_prebreakout(
     summary_df: pl.DataFrame,
     rollup_df: pl.DataFrame | None = None,
+    fast_short: int = 3,
+    fast_base: int = 10,
+    std_short: int = 5,
+    std_base: int = 22,
 ) -> list[dict]:
     """Institutional Accumulation Radar — Early Warning Scanner.
 
@@ -653,8 +657,8 @@ def screen_prebreakout(
     summary_df = summary_df.filter(pl.col("symbol").is_in(valid_symbols))
 
     # Compute both windows in one pass each
-    fast_joined, fast_dominators = _compute_all_turnover_momentum(summary_df, 3, 10, rollup_df)
-    std_joined, _ = _compute_all_turnover_momentum(summary_df, 5, 22, rollup_df)
+    fast_joined, fast_dominators = _compute_all_turnover_momentum(summary_df, fast_short, fast_base, rollup_df)
+    std_joined, _ = _compute_all_turnover_momentum(summary_df, std_short, std_base, rollup_df)
 
     if fast_joined.is_empty():
         return []
