@@ -342,6 +342,7 @@ class Handler(BaseHTTPRequestHandler):
         fast_base = int(_first(q, "fast_base") or 10)
         std_short = int(_first(q, "std_short") or 5)
         std_base = int(_first(q, "std_base") or 22)
+        min_turnover = float(_first(q, "min_turnover") or 5000000.0)
 
         conn = get_conn()
         try:
@@ -358,6 +359,7 @@ class Handler(BaseHTTPRequestHandler):
             "fast_base": fast_base,
             "std_short": std_short,
             "std_base": std_base,
+            "min_turnover": min_turnover,
         }
 
         def compute(conn):
@@ -385,7 +387,7 @@ class Handler(BaseHTTPRequestHandler):
                     pl.col("buy_amount").cast(pl.Float64),
                     pl.col("sell_amount").cast(pl.Float64),
                 )
-            candidates = screen_prebreakout(summary, rollup, fast_short, fast_base, std_short, std_base)
+            candidates = screen_prebreakout(summary, rollup, fast_short, fast_base, std_short, std_base, min_turnover)
             return {"candidates": candidates, "trade_date": as_of.isoformat() if as_of else (dates[-1].isoformat() if dates else None)}
 
         return self._cached("prebreakout", params, compute)
