@@ -387,8 +387,9 @@ class Handler(BaseHTTPRequestHandler):
                     pl.col("buy_amount").cast(pl.Float64),
                     pl.col("sell_amount").cast(pl.Float64),
                 )
-            candidates = screen_prebreakout(summary, rollup, fast_short, fast_base, std_short, std_base, min_turnover)
-            return {"candidates": candidates, "trade_date": as_of.isoformat() if as_of else (dates[-1].isoformat() if dates else None)}
+            result = screen_prebreakout(summary, rollup, fast_short, fast_base, std_short, std_base, min_turnover)
+            result["trade_date"] = as_of.isoformat() if as_of else (dates[-1].isoformat() if dates else None)
+            return result
 
         return self._cached("prebreakout", params, compute)
 

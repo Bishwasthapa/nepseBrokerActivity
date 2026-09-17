@@ -631,8 +631,8 @@ def screen_prebreakout(
     std_short: int = 5,
     std_base: int = 22,
     min_turnover_baseline: float = 5_000_000.0,
-) -> list[dict]:
-    """Institutional Accumulation Radar — Early Warning Scanner.
+) -> dict[str, list[dict]]:
+    """Institutional Accumulation & Distribution Radar — Early Warning Scanner.
 
     Three-factor scoring system that surfaces stocks in stealth accumulation
     BEFORE the standard STEALTH_BUILDING flag triggers on the 5v22 window.
@@ -662,7 +662,7 @@ def screen_prebreakout(
     std_joined, _ = _compute_all_turnover_momentum(summary_df, std_short, std_base, rollup_df)
 
     if fast_joined.is_empty():
-        return []
+        return {"candidates": [], "dist_candidates": []}
 
     # Join fast and std on symbol to get both ratios per symbol
     combined = fast_joined.join(
@@ -676,8 +676,10 @@ def screen_prebreakout(
         how="inner",
     )
 
-    # Build broker persistence map: symbol -> streak count (same top broker last 3 sessions)
-    broker_persistence: dict[str, int] = {}
+    # Build broker persistence maps: symbol -> streak count (same top broker last 3 sessions)
+    acc_persistence: dict[str, int] = {}
+    dist_persistence: dict[str, int] = {}
+    
     if rollup_df is not None and not rollup_df.is_empty():
         dates_sorted = sorted(summary_df["trade_date"].unique().to_list())
         last3 = dates_sorted[-3:]
@@ -685,26 +687,45 @@ def screen_prebreakout(
         for sym in valid_symbols:
             sym_roll = recent_rollup.filter(pl.col("symbol") == sym)
             if sym_roll.is_empty():
-                broker_persistence[sym] = 0
+                acc_persistence[sym] = 0
+                dist_persistence[sym] = 0
                 continue
-            streak = 0
-            prev_top = None
+            
+            a_streak, d_streak = 0, 0
+            a_prev, d_prev = None, None
+            
             for ld in last3:
                 day = sym_roll.filter(pl.col("trade_date") == ld)
                 if day.is_empty():
                     continue
-                top_broker = day.sort("buy_qty", descending=True).row(0, named=True)["broker_id"]
-                if prev_top is None:
-                    prev_top = top_broker
-                    streak = 1
-                elif top_broker == prev_top:
-                    streak += 1
+                    
+                top_b = day.sort("buy_qty", descending=True).row(0, named=True)["broker_id"]
+                top_s = day.sort("sell_qty", descending=True).row(0, named=True)["broker_id"]
+                
+                if a_prev is None:
+                    a_prev = top_b
+                    a_streak = 1
+                elif top_b == a_prev:
+                    a_streak += 1
                 else:
-                    prev_top = top_broker
-                    streak = 1
-            broker_persistence[sym] = streak
+                    a_prev = top_b
+                    a_streak = 1
+                    
+                if d_prev is None:
+                    d_prev = top_s
+                    d_streak = 1
+                elif top_s == d_prev:
+                    d_streak += 1
+                else:
+                    d_prev = top_s
+                    d_streak = 1
+                    
+            acc_persistence[sym] = a_streak
+            dist_persistence[sym] = d_streak
 
-    results = []
+    accumulation_candidates = []
+    distribution_candidates = []
+
     for r in combined.iter_rows(named=True):
         sym = r["symbol"]
         fast_ratio = r["turnover_ratio"]
@@ -717,36 +738,73 @@ def screen_prebreakout(
         if std_avg_turnover_base < min_turnover_baseline:
             continue
 
-        # Score the three factors
-        f1 = 1 if fast_ratio >= 1.20 else 0                     # Fast window heat
-        f2 = 1 if fast_ratio > (std_ratio * 1.05) else 0         # Volume acceleration
-        f3_streak = broker_persistence.get(sym, 0)
-        f3 = 1 if f3_streak >= 2 else 0                          # Broker persistence
+        # ACCUMULATION FACTORS (Early Entry)
+        # 1. Fast window heat
+        a_f1 = 1 if fast_ratio >= 1.20 else 0
+        
+        # 2. Volume acceleration (short term faster than medium term)
+        a_f2 = 1 if fast_ratio > (std_ratio * 1.05) else 0
+        
+        acc_b, dist_b = fast_dominators.get(sym, (None, None))
+        
+        # 3. Broker lock (Top buyer consistency)
+        acc_streak = acc_persistence.get(sym, 0)
+        a_f3 = 1 if acc_streak >= 2 else 0
+                
+        a_score = a_f1 + a_f2 + a_f3
 
-        score = f1 + f2 + f3
-        if score < 2:
-            continue
+        # DISTRIBUTION FACTORS (Early Exit)
+        # 1. Fast window cooling (volume dying relative to fast baseline)
+        d_f1 = 1 if fast_ratio <= 0.80 else 0
+        
+        # 2. Deceleration (fast volume dropping faster than medium term trend)
+        d_f2 = 1 if fast_ratio < (std_ratio * 0.95) else 0
+        
+        # 3. Broker dump (Top seller consistency)
+        dist_streak = dist_persistence.get(sym, 0)
+        d_f3 = 1 if dist_streak >= 2 else 0
+                
+        d_score = d_f1 + d_f2 + d_f3
 
-        conviction = "HIGH_CONVICTION" if score == 3 else "PRE_BREAKOUT_WATCH"
-        acc, dist = fast_dominators.get(sym, (None, None))
+        if a_score >= 2:
+            sig = "HIGH_CONVICTION" if a_score == 3 else "PRE_BREAKOUT_WATCH"
+            accumulation_candidates.append({
+                "symbol": sym,
+                "conviction": sig,
+                "score": a_score,
+                "fast_ratio": round(fast_ratio, 2),
+                "std_ratio": round(std_ratio, 2),
+                "fast_rank_drift": round(r["rank_drift"], 2),
+                "broker_streak": acc_streak,
+                "close": r["close"],
+                "price_change_pct_window": r["price_change_pct_window"],
+                "top_accumulator": acc_b,
+                "top_distributor": dist_b,
+            })
+            
+        if d_score >= 2:
+            sig = "DISTRIBUTION_LOCK" if d_score == 3 else "EARLY_EXHAUSTION"
+            distribution_candidates.append({
+                "symbol": sym,
+                "conviction": sig,
+                "score": d_score,
+                "fast_ratio": round(fast_ratio, 2),
+                "std_ratio": round(std_ratio, 2),
+                "fast_rank_drift": round(r["rank_drift"], 2),
+                "dist_streak": dist_streak,
+                "close": r["close"],
+                "price_change_pct_window": r["price_change_pct_window"],
+                "top_accumulator": acc_b,
+                "top_distributor": dist_b,
+            })
 
-        results.append({
-            "symbol": sym,
-            "conviction": conviction,
-            "score": score,
-            "fast_ratio": round(fast_ratio, 2),
-            "std_ratio": round(std_ratio, 2),
-            "fast_rank_drift": round(r["rank_drift"], 2),
-            "broker_streak": f3_streak,
-            "close": r["close"],
-            "price_change_pct_window": r["price_change_pct_window"],
-            "top_accumulator": acc,
-            "top_distributor": dist,
-        })
+    accumulation_candidates.sort(key=lambda x: (-x["score"], -x["fast_ratio"]))
+    distribution_candidates.sort(key=lambda x: (-x["score"], x["fast_ratio"]))
 
-    # Sort by score desc, then fast_ratio desc
-    results.sort(key=lambda x: (-x["score"], -x["fast_ratio"]))
-    return results
+    return {
+        "candidates": accumulation_candidates,
+        "dist_candidates": distribution_candidates
+    }
 
 def classify_track_a(
     broker_id: int,
