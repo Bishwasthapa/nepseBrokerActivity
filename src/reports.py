@@ -65,7 +65,16 @@ def _fingerprint() -> str:
                 mcap_count = 0
             cur.execute("SELECT COUNT(*) FROM daily_broker_rollup")
             rollup_count = cur.fetchone()[0]
-        raw = f"{latest}|{summary_count}|{mcap_count}|{rollup_count}"
+        try:
+            import os
+            from pathlib import Path
+            src_dir = Path(__file__).parent
+            mtimes = [p.stat().st_mtime for p in src_dir.glob("*.py")]
+            code_mtime = max(mtimes) if mtimes else 0
+        except Exception:
+            code_mtime = 0
+            
+        raw = f"{latest}|{summary_count}|{mcap_count}|{rollup_count}|{code_mtime}"
     except Exception:
         raw = "empty"
     finally:

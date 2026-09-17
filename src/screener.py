@@ -322,6 +322,8 @@ def _compute_all_turnover_momentum(
     """Compute multi-window turnover and rank drift statistics across all symbols."""
     if summary_df.is_empty():
         return pl.DataFrame(), {}
+    valid_symbols = [s for s in summary_df["symbol"].unique().to_list() if not _is_excluded(s)]
+    summary_df = summary_df.filter(pl.col("symbol").is_in(valid_symbols))
     dates = sorted(summary_df["trade_date"].unique().to_list())
     if not dates:
         return pl.DataFrame(), {}
