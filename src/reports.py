@@ -287,7 +287,6 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
     <button data-view="backtest" title="Historical T+5 and T+20 Win Rate Backtester.">Backtester</button>
     <button data-view="broker" title="Broker holdings &amp; activity: multi-session net flows and accumulated symbols.">Broker</button>
     <button data-view="momentum" title="Turnover &amp; rank rotation: compare recent vs baseline liquidity shifts.">Momentum</button>
-    <button data-view="radar" title="Early Warning Institutional Accumulation &amp; Distribution Radars">Radars</button>
     <button data-view="wash" title="Internal broker matching: detect same-broker buy and sell cross-trades.">Wash</button>
     <button data-view="smartmoney" title="Track C: Playwright scraper + AI insights on smart money absorption.">Smart Money Alerts</button>
     <button data-view="run" title="Dual-track screener: Track A momentum and Track B stealth accumulation.">Full Scan</button>
@@ -452,78 +451,78 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
       <span class="tag"><b>Turnover Ratio</b>: Recent avg daily turnover &divide; baseline avg turnover (&gt;1.5x = expansion)</span>
       <span class="tag"><b>Rank Drift</b>: Baseline Rank &minus; Recent Rank (positive = climbed the liquidity board)</span>
       <span class="tag"><b>Peer Match</b>: Normalized Euclidean distance similarity (0&ndash;100%)</span>
-      <span class="tag"><b>Badges</b>: MOMENTUM_GAINER &middot; STEALTH_BUILDING &middot; HIGH_VOLUME_STABLE &middot; MOMENTUM_LOSER &middot; LIQUIDITY_FADING</span>
+      <span class="tag"><b>Badges</b>: MOMENTUM_GAINER &middot; STEALTH_BUILDING &middot; PRE_BREAKOUT_WATCH &middot; HIGH_CONVICTION &middot; MOMENTUM_LOSER &middot; EARLY_EXHAUSTION &middot; DISTRIBUTION_LOCK</span>
     </div>
   </div>
-  <div class="controls" style="align-items: flex-end;">
-    <label title="Optional: inspect a specific ticker's turnover momentum & find similar peer stocks.">Ticker (Optional)<input id="mom-sym" placeholder="e.g. GHL"></label>
-    <label title="Number of recent trading sessions to measure.">Std Recent<input id="mom-short" type="number" value="5" min="1" max="50"></label>
-    <label title="Longer baseline reference window.">Std Baseline<input id="mom-base" type="number" value="22" min="1" max="100"></label>
-    <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="mom-asof" class="dti" type="date" value="__LATEST_DATE__" style="width:130px;"></label>
-    <button onclick="loadMomentum()" style="margin-bottom:0.4rem;">Run</button>
+  
+  <div class="sub-nav" style="display:flex; gap:1rem; margin-bottom: 1rem; border-bottom: 1px solid var(--line); padding-bottom: 0.5rem;">
+    <button class="calbtn active" id="btn-mom-std" onclick="switchMomTab('std')" style="font-weight:bold; color:var(--acc); border-color:var(--acc);">Standard Sweep</button>
+    <button class="calbtn" id="btn-mom-radar" onclick="switchMomTab('radar')">Early Warning Radars</button>
   </div>
-  <div class="block" id="mom-single-wrap" style="display:none"><h3>Symbol Momentum Diagnostic</h3><div id="mom-single"></div></div>
-  <div class="block" id="mom-similar-wrap" style="display:none"><h3>Similar Momentum Profiles (Nearest Peers)</h3><div id="mom-similar"></div></div>
-  <div class="block">
-    <details open>
-      <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px;">Gainers &mdash; climbing the board</summary>
-      <div id="mom-gain" class="empty">Compares recent vs baseline turnover to find structural activity shifts.</div>
-    </details>
-  </div>
-  <div class="block">
-    <details open>
-      <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px;">Losers &mdash; fading activity</summary>
-      <div id="mom-los" class="empty"></div>
-    </details>
-  </div>
-</section>
 
-<section class="view" id="view-radar">
-  <div class="view-intro">
-    <h2>Institutional Accumulation &amp; Distribution Radars</h2>
-    <p>Early warning scanners that hunt for institutional footprints <em>before</em> a stock formally triggers a standard breakout or breakdown. Evaluates momentum acceleration/deceleration and multi-day broker persistence.</p>
-    <div class="tips">
-      <span class="tag"><b>Badges</b>: PRE_BREAKOUT_WATCH &middot; HIGH_CONVICTION &middot; EARLY_EXHAUSTION &middot; DISTRIBUTION_LOCK</span>
+  <div id="mom-tab-std">
+    <div class="controls" style="align-items: center;">
+      <label title="Optional: inspect a specific ticker's turnover momentum & find similar peer stocks.">Ticker (Optional)<input id="mom-sym" placeholder="e.g. GHL"></label>
+      <label title="Number of recent trading sessions to measure.">Std Recent<input id="mom-short" type="number" value="5" min="1" max="50"></label>
+      <label title="Longer baseline reference window.">Std Baseline<input id="mom-base" type="number" value="22" min="1" max="100"></label>
+      <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="mom-asof" class="dti" type="date" value="__LATEST_DATE__" style="width:130px;"></label>
+      <button onclick="loadMomentum()">Run Sweep</button>
+    </div>
+    <div class="block" id="mom-single-wrap" style="display:none"><h3>Symbol Momentum Diagnostic</h3><div id="mom-single"></div></div>
+    <div class="block" id="mom-similar-wrap" style="display:none"><h3>Similar Momentum Profiles (Nearest Peers)</h3><div id="mom-similar"></div></div>
+    <div class="block">
+      <details open>
+        <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px;">Gainers &mdash; climbing the board</summary>
+        <div id="mom-gain" class="empty">Compares recent vs baseline turnover to find structural activity shifts.</div>
+      </details>
+    </div>
+    <div class="block">
+      <details open>
+        <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px;">Losers &mdash; fading activity</summary>
+        <div id="mom-los" class="empty"></div>
+      </details>
     </div>
   </div>
-  <div class="controls" style="align-items: flex-end;">
-    <fieldset style="border:1px solid var(--line);border-radius:6px;padding:0.4rem;display:flex;gap:0.6rem;margin:0;">
-      <legend style="color:var(--mut);font-size:0.75rem;padding:0 4px;">Radar Windows</legend>
-      <label title="Fast recent window (default 3).">Fast Recent<input id="radar-fast-short" type="number" value="3" min="1" max="10"></label>
-      <label title="Fast baseline window (default 10).">Fast Baseline<input id="radar-fast-base" type="number" value="10" min="1" max="50"></label>
-      <label title="Minimum baseline average turnover (filters out dry microcaps).">Min Turnover (NRS)<input id="radar-fast-min" type="number" value="5000000" step="100000" style="width:110px;"></label>
-    </fieldset>
 
-    <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="radar-asof" class="dti" type="date" value="__LATEST_DATE__" style="width:130px;"></label>
-    <button onclick="loadRadar()" style="margin-bottom:0.4rem;">Run Radar</button>
-  </div>
-  <div class="block" id="radar-wrap">
-    <details open>
-      <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px;">
-        &#x1F6A8; Institutional Accumulation Radar <span class="badge stealth" style="margin-left:8px;font-size:12px;">Early Warning</span>
-      </summary>
-      <p style="color:var(--muted);font-size:13px;margin:6px 0 12px;">Stocks scored across 3 institutional signals <em>before</em> the standard momentum flag triggers. Score 2/3 = <strong>PRE_BREAKOUT_WATCH</strong> &middot; Score 3/3 = <strong>HIGH_CONVICTION</strong>.</p>
-      <div class="tips" style="margin-bottom:10px;">
-        <span class="tag"><b id="tip-f1">Factor 1 &mdash; Fast Heat (3v10):</b> avg turnover &ge; 1.20&times; vs baseline</span>
-        <span class="tag"><b id="tip-f2">Factor 2 &mdash; Acceleration:</b> Fast ratio &gt; Std ratio (volume intensifying faster than trend)</span>
-        <span class="tag"><b>Factor 3 &mdash; Broker Lock:</b> Same institutional broker holds top-buyer seat 2+ of last 3 sessions</span>
-      </div>
-      <div id="mom-radar" class="empty">Click "Run Radar" to activate the Accumulation Radar.</div>
-    </details>
-  </div>
-  <div class="block" id="radar-dist-wrap">
-    <details open>
-      <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px; color:var(--bad);">
-        &#x26A0; Institutional Distribution Radar <span class="badge loser" style="margin-left:8px;font-size:12px;">Early Exit Warning</span>
-      </summary>
-      <p style="color:var(--muted);font-size:13px;margin:6px 0 12px;">The inverse of accumulation. Spot smart money quietly dumping and momentum cooling before the stock formally becomes a loser. Score 2/3 = <strong>EARLY_EXHAUSTION</strong> &middot; Score 3/3 = <strong>DISTRIBUTION_LOCK</strong>.</p>
-      <div class="tips" style="margin-bottom:10px;">
-        <span class="tag"><b id="tip-d1">Factor 1 &mdash; Fast Cooling:</b> avg turnover &le; 0.80&times; vs baseline</span>
-        <span class="tag"><b id="tip-d2">Factor 2 &mdash; Deceleration:</b> Fast ratio &lt; Std ratio (volume dying faster than trend)</span>
-        <span class="tag"><b>Factor 3 &mdash; Broker Dump:</b> Same institutional broker holds top-seller seat 2+ of last 3 sessions</span>
-      </div>
-      <div id="mom-radar-dist" class="empty">Click "Run Radar" to activate the Distribution Radar.</div>
-    </details>
+  <div id="mom-tab-radar" style="display:none;">
+    <div class="controls" style="align-items: center;">
+      <fieldset style="border:1px solid var(--line);border-radius:6px;padding:0.4rem;display:flex;gap:0.6rem;margin:0;">
+        <legend style="color:var(--mut);font-size:0.75rem;padding:0 4px;">Radar Windows</legend>
+        <label title="Fast recent window (default 3).">Fast Recent<input id="radar-fast-short" type="number" value="3" min="1" max="10"></label>
+        <label title="Fast baseline window (default 10).">Fast Baseline<input id="radar-fast-base" type="number" value="10" min="1" max="50"></label>
+        <label title="Minimum baseline average turnover (filters out dry microcaps).">Min Turnover (NRS)<input id="radar-fast-min" type="number" value="5000000" step="100000" style="width:110px;"></label>
+      </fieldset>
+      <label title="Analysis end date. Defaults to the latest; pick another date.">As of Date<input id="radar-asof" class="dti" type="date" value="__LATEST_DATE__" style="width:130px;"></label>
+      <button onclick="loadRadar()">Run Radars</button>
+    </div>
+    <div class="block" id="radar-wrap">
+      <details open>
+        <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px;">
+          &#x1F6A8; Institutional Accumulation Radar <span class="badge stealth" style="margin-left:8px;font-size:12px;">Early Warning</span>
+        </summary>
+        <p style="color:var(--muted);font-size:13px;margin:6px 0 12px;">Stocks scored across 3 institutional signals <em>before</em> the standard momentum flag triggers. Score 2/3 = <strong>PRE_BREAKOUT_WATCH</strong> &middot; Score 3/3 = <strong>HIGH_CONVICTION</strong>.</p>
+        <div class="tips" style="margin-bottom:10px;">
+          <span class="tag"><b id="tip-f1">Factor 1 &mdash; Fast Heat (3v10):</b> avg turnover &ge; 1.20&times; vs baseline</span>
+          <span class="tag"><b id="tip-f2">Factor 2 &mdash; Acceleration:</b> Fast ratio &gt; Std ratio (volume intensifying faster than trend)</span>
+          <span class="tag"><b>Factor 3 &mdash; Broker Lock:</b> Same institutional broker holds top-buyer seat 2+ of last 3 sessions</span>
+        </div>
+        <div id="mom-radar" class="empty">Click "Run Radars" to activate the Accumulation Radar.</div>
+      </details>
+    </div>
+    <div class="block" id="radar-dist-wrap">
+      <details open>
+        <summary style="cursor:pointer; font-size:1.17em; font-weight:bold; margin-bottom:10px; color:var(--bad);">
+          &#x26A0; Institutional Distribution Radar <span class="badge loser" style="margin-left:8px;font-size:12px;">Early Exit Warning</span>
+        </summary>
+        <p style="color:var(--muted);font-size:13px;margin:6px 0 12px;">The inverse of accumulation. Spot smart money quietly dumping and momentum cooling before the stock formally becomes a loser. Score 2/3 = <strong>EARLY_EXHAUSTION</strong> &middot; Score 3/3 = <strong>DISTRIBUTION_LOCK</strong>.</p>
+        <div class="tips" style="margin-bottom:10px;">
+          <span class="tag"><b id="tip-d1">Factor 1 &mdash; Fast Cooling:</b> avg turnover &le; 0.80&times; vs baseline</span>
+          <span class="tag"><b id="tip-d2">Factor 2 &mdash; Deceleration:</b> Fast ratio &lt; Std ratio (volume dying faster than trend)</span>
+          <span class="tag"><b>Factor 3 &mdash; Broker Dump:</b> Same institutional broker holds top-seller seat 2+ of last 3 sessions</span>
+        </div>
+        <div id="mom-radar-dist" class="empty">Click "Run Radars" to activate the Distribution Radar.</div>
+      </details>
+    </div>
   </div>
 </section>
 
@@ -684,6 +683,19 @@ var btns=document.querySelectorAll('nav button');for(var i=0;i<btns.length;i++)b
 q('view-'+name).classList.add('active');}
 var nbtns=document.querySelectorAll('nav button');for(var i=0;i<nbtns.length;i++)(function(b){b.addEventListener('click',function(){showTab(b.dataset.view);if(b.dataset.view==='watchlist')loadWatchlist();});})(nbtns[i]);
 function updateTab(name){showTab(name);window.scrollTo({top:0,behavior:'smooth'});}
+function switchMomTab(tab){
+  var btnStd=q('btn-mom-std'),btnRadar=q('btn-mom-radar');
+  var divStd=q('mom-tab-std'),divRadar=q('mom-tab-radar');
+  if(tab==='std'){
+    btnStd.style.fontWeight='bold';btnStd.style.color='var(--acc)';btnStd.style.borderColor='var(--acc)';
+    btnRadar.style.fontWeight='normal';btnRadar.style.color='var(--mut)';btnRadar.style.borderColor='var(--line)';
+    divStd.style.display='block';divRadar.style.display='none';
+  }else{
+    btnRadar.style.fontWeight='bold';btnRadar.style.color='var(--acc)';btnRadar.style.borderColor='var(--acc)';
+    btnStd.style.fontWeight='normal';btnStd.style.color='var(--mut)';btnStd.style.borderColor='var(--line)';
+    divRadar.style.display='block';divStd.style.display='none';
+  }
+}
 function setStatus(m){q('status-msg').textContent=m;}
 var _busy=0;
 function busy(on){_busy+=on?1:-1;if(_busy<0)_busy=0;var s=q('spin');if(s)s.className='spin'+(_busy>0?'':' hidden');}
