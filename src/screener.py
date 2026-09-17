@@ -630,6 +630,7 @@ def screen_prebreakout(
     fast_base: int = 10,
     std_short: int = 5,
     std_base: int = 22,
+    min_turnover_baseline: float = 5_000_000.0,
 ) -> list[dict]:
     """Institutional Accumulation Radar — Early Warning Scanner.
 
@@ -665,10 +666,11 @@ def screen_prebreakout(
 
     # Join fast and std on symbol to get both ratios per symbol
     combined = fast_joined.join(
-        std_joined.select(["symbol", "turnover_ratio", "avg_rank_short", "rank_drift"]).rename({
+        std_joined.select(["symbol", "turnover_ratio", "avg_rank_short", "rank_drift", "avg_turnover_base"]).rename({
             "turnover_ratio": "std_ratio",
             "avg_rank_short": "std_rank_short",
             "rank_drift": "std_rank_drift",
+            "avg_turnover_base": "std_avg_turnover_base",
         }),
         on="symbol",
         how="inner",
@@ -707,7 +709,12 @@ def screen_prebreakout(
         sym = r["symbol"]
         fast_ratio = r["turnover_ratio"]
         std_ratio = r["std_ratio"]
+        std_avg_turnover_base = r.get("std_avg_turnover_base") or 0.0
+        
         if fast_ratio is None or std_ratio is None:
+            continue
+
+        if std_avg_turnover_base < min_turnover_baseline:
             continue
 
         # Score the three factors
