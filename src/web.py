@@ -40,6 +40,7 @@ from src.screener import (
     sector_overview,
     detect_syndicates,
     backtest_signals,
+    screen_prebreakout,
 )
 from src.watchlist import (
     add_note as watch_note,
@@ -334,6 +335,46 @@ class Handler(BaseHTTPRequestHandler):
             }
 
         return self._cached("momentum", params, compute)
+
+    def api_prebreakout(self, q):
+        raw_as_of = _parse_date(_first(q, "as_of"))
+        conn = get_conn()
+        try:
+            as_of, closed_info = self._validate_as_of(conn, raw_as_of)
+            if closed_info:
+                self._send_json(closed_info)
+                return
+        finally:
+            conn.close()
+
+        params = {"as_of": as_of.isoformat() if as_of else None}
+
+        def compute(conn):
+            dates = fetch_trade_dates(conn)
+            if as_of is not None:
+                dates = [d for d in dates if d <= as_of]
+            needed = dates[-22:]  # 22 days enough for 5v22 and 3v10
+            summary = load_summary(conn, needed)
+            rollup = load_rollup(conn, needed)
+            if not summary.is_empty():
+                summary = summary.with_columns(
+                    pl.col("close_price").cast(pl.Float64),
+                    pl.col("total_turnover").cast(pl.Float64),
+                    pl.col("turnover_rank").cast(pl.Int32),
+                )
+            if not rollup.is_empty():
+                rollup = rollup.with_columns(
+                    pl.col("broker_id").cast(pl.Int32),
+                    pl.col("buy_qty").cast(pl.Int64),
+                    pl.col("sell_qty").cast(pl.Int64),
+                    pl.col("self_trade_qty").cast(pl.Int64),
+                    pl.col("buy_amount").cast(pl.Float64),
+                    pl.col("sell_amount").cast(pl.Float64),
+                )
+            candidates = screen_prebreakout(summary, rollup)
+            return {"candidates": candidates, "trade_date": as_of.isoformat() if as_of else (dates[-1].isoformat() if dates else None)}
+
+        return self._cached("prebreakout", params, compute)
 
     def api_smartmoney(self, q):
         raw_as_of = _parse_date(_first(q, "as_of"))
@@ -665,6 +706,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(self.api_smartmoney(q))
                 elif command == "momentum":
                     self._send_json(self.api_momentum(q))
+                elif command == "prebreakout":
+                    self._send_json(self.api_prebreakout(q))
                 elif command == "wash":
                     self._send_json(self.api_wash(q))
                 elif command == "inspect" and len(parts) >= 2:

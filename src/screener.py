@@ -623,6 +623,120 @@ def screen_turnover_momentum(
     return _to_rows(gainers, True), _to_rows(losers, False)
 
 
+def screen_prebreakout(
+    summary_df: pl.DataFrame,
+    rollup_df: pl.DataFrame | None = None,
+) -> list[dict]:
+    """Institutional Accumulation Radar — Early Warning Scanner.
+
+    Three-factor scoring system that surfaces stocks in stealth accumulation
+    BEFORE the standard STEALTH_BUILDING flag triggers on the 5v22 window.
+
+    Factor 1 — Fast Window Heat:
+        3v10 turnover ratio >= 1.20 (short-term volume expanding vs 10-day baseline)
+
+    Factor 2 — Volume Acceleration:
+        3v10 ratio > 5v22 ratio (the very recent 3 days are outpacing the 22-day trend,
+        meaning activity is accelerating, not just elevated)
+
+    Factor 3 — Broker Persistence:
+        The same broker appears as the top net-buyer in 2+ of the last 3 sessions,
+        confirming institutional intent vs random retail churn.
+
+    Score 2/3 → PRE_BREAKOUT_WATCH
+    Score 3/3 → HIGH_CONVICTION
+    """
+    if summary_df.is_empty():
+        return []
+
+    valid_symbols = [s for s in summary_df["symbol"].unique().to_list() if not _is_excluded(s)]
+    summary_df = summary_df.filter(pl.col("symbol").is_in(valid_symbols))
+
+    # Compute both windows in one pass each
+    fast_joined, fast_dominators = _compute_all_turnover_momentum(summary_df, 3, 10, rollup_df)
+    std_joined, _ = _compute_all_turnover_momentum(summary_df, 5, 22, rollup_df)
+
+    if fast_joined.is_empty():
+        return []
+
+    # Join fast and std on symbol to get both ratios per symbol
+    combined = fast_joined.join(
+        std_joined.select(["symbol", "turnover_ratio", "avg_rank_short", "rank_drift"]).rename({
+            "turnover_ratio": "std_ratio",
+            "avg_rank_short": "std_rank_short",
+            "rank_drift": "std_rank_drift",
+        }),
+        on="symbol",
+        how="inner",
+    )
+
+    # Build broker persistence map: symbol -> streak count (same top broker last 3 sessions)
+    broker_persistence: dict[str, int] = {}
+    if rollup_df is not None and not rollup_df.is_empty():
+        dates_sorted = sorted(summary_df["trade_date"].unique().to_list())
+        last3 = dates_sorted[-3:]
+        recent_rollup = rollup_df.filter(pl.col("trade_date").is_in(last3))
+        for sym in valid_symbols:
+            sym_roll = recent_rollup.filter(pl.col("symbol") == sym)
+            if sym_roll.is_empty():
+                broker_persistence[sym] = 0
+                continue
+            streak = 0
+            prev_top = None
+            for ld in last3:
+                day = sym_roll.filter(pl.col("trade_date") == ld)
+                if day.is_empty():
+                    continue
+                top_broker = day.sort("buy_qty", descending=True).row(0, named=True)["broker_id"]
+                if prev_top is None:
+                    prev_top = top_broker
+                    streak = 1
+                elif top_broker == prev_top:
+                    streak += 1
+                else:
+                    prev_top = top_broker
+                    streak = 1
+            broker_persistence[sym] = streak
+
+    results = []
+    for r in combined.iter_rows(named=True):
+        sym = r["symbol"]
+        fast_ratio = r["turnover_ratio"]
+        std_ratio = r["std_ratio"]
+        if fast_ratio is None or std_ratio is None:
+            continue
+
+        # Score the three factors
+        f1 = 1 if fast_ratio >= 1.20 else 0                     # Fast window heat
+        f2 = 1 if fast_ratio > (std_ratio * 1.05) else 0         # Volume acceleration
+        f3_streak = broker_persistence.get(sym, 0)
+        f3 = 1 if f3_streak >= 2 else 0                          # Broker persistence
+
+        score = f1 + f2 + f3
+        if score < 2:
+            continue
+
+        conviction = "HIGH_CONVICTION" if score == 3 else "PRE_BREAKOUT_WATCH"
+        acc, dist = fast_dominators.get(sym, (None, None))
+
+        results.append({
+            "symbol": sym,
+            "conviction": conviction,
+            "score": score,
+            "fast_ratio": round(fast_ratio, 2),
+            "std_ratio": round(std_ratio, 2),
+            "fast_rank_drift": round(r["rank_drift"], 2),
+            "broker_streak": f3_streak,
+            "close": r["close"],
+            "price_change_pct_window": r["price_change_pct_window"],
+            "top_accumulator": acc,
+            "top_distributor": dist,
+        })
+
+    # Sort by score desc, then fast_ratio desc
+    results.sort(key=lambda x: (-x["score"], -x["fast_ratio"]))
+    return results
+
 def classify_track_a(
     broker_id: int,
     nets: dict[str, int],
