@@ -427,9 +427,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._cached("sector", {}, run)
 
     def api_syndicate(self, q):
+        w = int(q.get("window", [22])[0])
         def run(conn):
-            return {"syndicates": detect_syndicates(conn)}
-        return self._cached("syndicate", {}, run)
+            return {"syndicates": detect_syndicates(conn, window=w)}
+        return self._cached(f"syndicate_{w}", {}, run)
 
     def api_backtest(self, q):
         def run(conn):

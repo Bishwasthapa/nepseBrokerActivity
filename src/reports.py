@@ -401,10 +401,11 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
       <span class="tag"><b>Co-occurrences</b>: The number of distinct stocks both brokers were top buyers in.</span>
     </div>
   </div>
-  <div class="controls">
+  <div class="controls" style="align-items: center;">
+    <label title="Number of recent trading sessions to analyze for syndicates.">Time Window (Days)<input id="syndicate-window" type="number" value="22" min="5" max="120"></label>
     <button onclick="loadSyndicate()">Detect Syndicates</button>
   </div>
-  <div class="block"><h3>Identified Broker Packs (Last 22 Days)</h3>
+  <div class="block"><h3>Identified Broker Packs</h3>
     <div id="syndicate-out" class="empty">Click "Detect Syndicates" to run network clustering.</div>
   </div>
 </section>
@@ -1101,8 +1102,9 @@ function loadSector(){
 }
 var SYNDICATE_COLS=[{key:'broker_a',label:'Broker A'},{key:'broker_b',label:'Broker B'},{key:'co_occurrences',label:'Co-accumulations',type:'int'},{key:'symbols',label:'Symbols Hunted Together'}];
 function loadSyndicate(){
+  var w = parseInt(q('syndicate-window').value, 10) || 22;
   q('syndicate-out').innerHTML='<div class="empty">Running clustering algorithm...</div>';
-  api('syndicate').then(function(data){
+  api('syndicate', {window: w}).then(function(data){
     if(!data || !data.syndicates){ q('syndicate-out').innerHTML='<div class="empty neg">Failed to detect syndicates.</div>'; return; }
     
     var rows = data.syndicates.map(function(item){
