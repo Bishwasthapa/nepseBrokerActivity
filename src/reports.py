@@ -293,6 +293,7 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
     <button data-view="signals" title="Historical screener signals and persistence streaks.">Signals</button>
     <button data-view="analyze" title="Rank-price correlation, broker signature classification, and forward returns.">Analyze</button>
     <button data-view="watchlist" title="Personal research journal: track symbols, thesis notes, and trade plans.">Watchlist</button>
+    <button data-view="live-whale" title="Live intraday block trade tracker from HamroShare Teaser API.">Live Whales</button>
   </nav>
 </header>
 <main>
@@ -649,6 +650,29 @@ td.actions button:hover{color:var(--acc);border-color:var(--acc)}
   <div class="controls"><button onclick="loadWatchlist()">Refresh</button></div>
   <div class="block"><h3>Watchlist</h3><div id="wl-list" class="empty">Add a symbol above, or manage via CLI (<code>watch add ...</code>). Click a symbol for its dated journal.</div></div>
   <div class="block"><h3 id="wl-detail-h">Journal details</h3><div id="wl-detail" class="empty">Click a symbol above to view its thesis, trade plan and dated notes.</div></div>
+</section>
+
+<section class="view" id="view-live-whale">
+  <div class="view-intro">
+    <h2>Live Whale Tracker &mdash; Intraday Block Trades</h2>
+    <p>Tracks massive institutional block trades dynamically throughout the trading day using the HamroShare Teaser API.</p>
+    <div class="tips">
+      <span class="tag"><b>Live Data</b>: Updates in real-time during market hours (11:00 AM - 3:00 PM).</span>
+      <span class="tag"><b>Smart Money</b>: Focuses entirely on bulk block executions, filtering out retail noise.</span>
+    </div>
+  </div>
+  <div class="controls" style="align-items: center;">
+    <label title="Ticker Symbol, e.g. SHEL">Ticker Symbol<input id="live-whale-sym" value="SHEL" style="width:100px"></label>
+    <button onclick="loadLiveWhales()">Scan Live Blocks</button>
+  </div>
+  <div class="block">
+    <h3>Detected Block Trades Today</h3>
+    <div id="live-whale-out" class="empty">Click "Scan Live Blocks" to fetch the latest whales.</div>
+  </div>
+  <div class="block">
+    <h3>Intraday Volume Trend (5-min buckets)</h3>
+    <div id="live-trend-out" class="empty"></div>
+  </div>
 </section>
 
 <details><summary>Saved snapshots (cached JSON)</summary>
@@ -1349,6 +1373,54 @@ function initCalendars(){
     document.addEventListener('click',function(e){if(pop.style.display==='block'&&!pop.contains(e.target)&&e.target!==btn)pop.style.display='none';});
   })(ins[k]);
 }
+
+var LIVE_WHALE_COLS=[
+  {key:'time',label:'Execution Time',desc:'Time of block trade'},
+  {key:'qty',label:'Quantity',type:'int',desc:'Shares traded in block'},
+  {key:'rate',label:'Rate',type:'num',desc:'Execution price'},
+  {key:'amount',label:'Turnover (NRS)',type:'num',desc:'Total value of the block'}
+];
+
+var LIVE_TREND_COLS=[
+  {key:'time',label:'Time Bucket',desc:'5-minute interval'},
+  {key:'rate',label:'Price',type:'num',desc:'Last traded price in interval'},
+  {key:'qty',label:'Volume',type:'int',desc:'Total volume in interval'}
+];
+
+function loadLiveWhales(){
+  var sym=(val('live-whale-sym')||'SHEL').trim().toUpperCase();
+  q('live-whale-out').innerHTML='<div class="empty">Fetching live block trades...</div>';
+  q('live-trend-out').innerHTML='';
+  api('live-whale?symbol='+encodeURIComponent(sym)).then(function(data){
+    if(!data)return;
+    if(data.error){q('live-whale-out').innerHTML='<div class="empty neg">Error: '+data.error+'</div>';return;}
+    
+    var tape = data || {};
+    var whales = tape.largest || [];
+    var seriesRaw = tape.series || [];
+    
+    // Render whales
+    if(!whales.length){
+      q('live-whale-out').innerHTML='<div class="empty">No massive block trades detected for '+sym+' yet today.</div>';
+    } else {
+      q('live-whale-out').innerHTML=renderTable(whales, LIVE_WHALE_COLS);
+    }
+    
+    // Render 5-min trend
+    if(seriesRaw.length){
+      // series format is [time, rate, qty]
+      var trendRows = seriesRaw.map(function(s) {
+        return {time: s[0], rate: s[1], qty: s[2]};
+      });
+      // Reverse to show latest first
+      trendRows.reverse();
+      q('live-trend-out').innerHTML=renderTable(trendRows, LIVE_TREND_COLS);
+    } else {
+      q('live-trend-out').innerHTML='<div class="empty">No intraday trend data available yet.</div>';
+    }
+  });
+}
+
 initCalendars();
 </script>
 </body></html>"""

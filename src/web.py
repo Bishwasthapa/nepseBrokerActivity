@@ -98,15 +98,20 @@ class Handler(BaseHTTPRequestHandler):
         body = reports.to_json(obj).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_text(self, text: str, content_type: str, status: int = 200) -> None:
+    def _send_text(self, text: str, content_type: str = "text/plain", status: int = 200) -> None:
         body = text.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -585,6 +590,22 @@ class Handler(BaseHTTPRequestHandler):
         # Live user data is never snapshot-cached (unlike scanner endpoints).
         return {"cached": False, "params": {"all": _bool(q, "all", False)}, "data": data}
 
+    def api_live_whale(self, q):
+        import urllib.request
+        import json
+        symbol = _first(q, "symbol", "SHEL").upper()
+        url = f"https://hamroshare.com.np/api/company/{symbol}/teaser?parts=tape"
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        })
+        try:
+            with urllib.request.urlopen(req) as response:
+                data = json.loads(response.read().decode())
+                tape = data.get("tape", {})
+                return {"cached": False, "params": {"symbol": symbol}, "data": tape}
+        except Exception as e:
+            return {"cached": False, "error": f"Failed to fetch live whales: {e}"}
+
     def api_watchitem(self, symbol: str, q):
         conn = get_conn()
         try:
@@ -747,6 +768,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(self.api_watchitem(parts[1], q))
                 elif command == "watchlist":
                     self._send_json(self.api_watchlist(q))
+                elif command == "live-whale":
+                    self._send_json(self.api_live_whale(q))
                 elif command == "dates":
                     self._send_json({"dates": reports._available_dates()})
                 else:
